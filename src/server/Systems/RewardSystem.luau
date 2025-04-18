@@ -1,0 +1,1 @@
+-- Distributes rewards after fights

@@ -1,0 +1,1 @@
+-- Handles client-side state and communication

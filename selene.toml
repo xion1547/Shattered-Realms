@@ -1,0 +1,11 @@
+[env]
+roblox = true
+
+[globals]
+# Optional, but good to define these globals that Roblox adds
+"game" = "table"
+"script" = "Instance"
+"task" = "function"
+"warn" = "function"
+"require" = "function"
+"print" = "function"

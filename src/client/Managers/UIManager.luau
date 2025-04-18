@@ -1,0 +1,1 @@
+-- Manages UI screens and interactions
