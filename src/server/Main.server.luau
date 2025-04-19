@@ -22,8 +22,6 @@ end
 
 -- 🔄 onConnect: Load only the modules you want on player join
 local function onConnect()
-	print("🔗 Player connected. Initializing selected client modules...")
-
 	local managers = Client:FindFirstChild("Managers")
 	local systems = Client:FindFirstChild("Systems")
 
