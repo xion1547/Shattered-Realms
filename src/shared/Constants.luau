@@ -1,1 +1,0 @@
--- Game-wide constants like cooldowns and config values
