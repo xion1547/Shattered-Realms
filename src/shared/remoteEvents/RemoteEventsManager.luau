@@ -34,6 +34,8 @@ function RemoteEventsManager:getEvent(eventEnum)
 
     -- Otherwise, warn if the event doesn't exist in ReplicatedStorage
     warn("[eventName] Event not found", eventName)
+
+    return nil
 end
 
 return RemoteEventsManager
