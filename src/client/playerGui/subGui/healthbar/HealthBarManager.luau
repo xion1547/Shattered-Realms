@@ -1,7 +1,9 @@
 -- src/client/gui/player/subGui/HealthBarManager.lua
 local HealthBarController = require(script.Parent.HealthBarController)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local BaseManager = require(ReplicatedStorage:WaitForChild("util"):WaitForChild("BaseManager"))
+local BaseManager = require(ReplicatedStorage:WaitForChild("utils"):WaitForChild("BaseManager"))
+local TweenUtil = require(script.Parent.Parent.Parent.Parent.utils.TweenUtil)
+local HealthBar = require(ReplicatedStorage:WaitForChild("uiTemplates"):WaitForChild("playerGui"):WaitForChild("HealthBar"))
 
 local HealthBarManager = {}
 HealthBarManager.__index = HealthBarManager
@@ -12,17 +14,18 @@ end
 
 function HealthBarManager:init(parent)
     -- Create the HealthBar instance and pass it to the controller
-    local HealthBarTemplate = game.ReplicatedStorage:WaitForChild("ui-templates"):WaitForChild("HealthBar")
-    local healthBarInstance = HealthBarTemplate:Clone()
-    healthBarInstance.Parent = parent
-    self.Bar = healthBarInstance
+    local healthBarInstance = HealthBar:create(parent)
+	print("HealthBarManager: HealthBar instance created", healthBarInstance)
+	self.Bar = healthBarInstance
 end
 
 function HealthBarManager:updateHealth(healthPercent)
     if self.Bar then
-        -- Update the health bar's fill size based on the health percentage
-        self.Bar.Fill.Size = UDim2.new(healthPercent, 0, 1, 0)
-    end
+		local fill = self.Bar:FindFirstChild("Fill")
+		if fill then
+			TweenUtil:TweenHealthBar(fill, healthPercent)
+		end
+	end
 end
 
 function HealthBarManager:cleanup()

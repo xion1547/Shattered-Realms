@@ -1,6 +1,6 @@
 -- src/client/gui/player/PlayerManager.lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ComponentLoader = require(ReplicatedStorage:WaitForChild("util"):WaitForChild("ComponentLoader"))
+local ComponentLoader = require(ReplicatedStorage:WaitForChild("utils"):WaitForChild("ComponentLoader"))
 
 local PlayerManager = {}
 PlayerManager.__index = PlayerManager
@@ -18,6 +18,7 @@ function PlayerManager:init(parentGUI)
 		return
 	end
 
+	print(`[PlayerManager] about to run loadComponents`)
 	-- Automatically load and bind all sub-managers
 	self.managers = ComponentLoader.loadComponents(subGuiFolder, parentGUI)
 end

@@ -1,10 +1,21 @@
--- src/replicatedStorage/RemoteEventsEnum.lua
-local RemoteEventsEnum = {}
+-- src/replicatedStorage/remoteEvents/RemoteEventsEnum.lua
+local RemoteEventsEnum = {
+	Player = {
+		HealthUpdate = "Player_HealthUpdate",
+		GoldUpdate = "Player_GoldUpdate",
+		Joined = "Player_Joined",
+		LevelUp = "Player_LevelUp",
+        Inventory = {
+            ItemAdded = "Inventory_ItemAdded",
+            ItemRemoved = "Inventory_ItemRemoved",
+        },
+	},
+	World = {
+		ZoneEntered = "World_ZoneEntered",
+		TimeOfDayChanged = "World_TimeOfDayChanged",
+	},
 
-RemoteEventsEnum.HealthUpdateEvent = "HealthUpdateEvent"
-RemoteEventsEnum.GoldUpdateEvent = "GoldUpdateEvent"
-RemoteEventsEnum.PlayerJoinedEvent = "PlayerJoinedEvent"
--- Add more events as necessary
-RemoteEventsEnum.PlayerLevelUpEvent = "PlayerLevelUpEvent"
+	-- Add more categories as needed
+}
 
-return RemoteEventsEnum
+return table.freeze(RemoteEventsEnum)

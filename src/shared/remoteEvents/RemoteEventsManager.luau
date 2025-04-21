@@ -1,41 +1,65 @@
 -- src/replicatedStorage/RemoteEventsManager.lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RemoteEventsEnum = require(script.Parent.RemoteEventsEnum)
+local RunService = game:GetService("RunService")
 
 local RemoteEventsManager = {}
 RemoteEventsManager.__index = RemoteEventsManager
 
--- Table to hold created RemoteEvents
-RemoteEventsManager.events = {}
+-- Singleton instance
+local instance = nil
 
--- Function to create a RemoteEvent if it doesn't exist
-function RemoteEventsManager:createEvent(eventName)
-    -- Check if the event already exists in ReplicatedStorage
-    if not ReplicatedStorage:FindFirstChild(eventName) then
-        local newEvent = Instance.new("RemoteEvent")
-        newEvent.Name = eventName
-        newEvent.Parent = ReplicatedStorage
-    end
+function RemoteEventsManager.new()
+	if instance then
+		return instance
+	end
+
+	instance = setmetatable({}, RemoteEventsManager)
+	return instance
 end
 
--- Function to get a RemoteEvent (or create it if it doesn't exist)
-function RemoteEventsManager:getEvent(eventEnum)
-    local eventName = RemoteEventsEnum[eventEnum]
-    
-    if not eventName then
-        warn("[RemoteEventsManager] Event not found in Enum:", eventEnum)
-        return nil
-    end
+function RemoteEventsManager:init()
+	self.allowedEventNames = {}
 
-    -- If the event is already in the table, return it
-    if self.events[eventName] then
-        return self.events[eventName]
-    end
+	local function traverseEnum(enumTable)
+		for _, value in pairs(enumTable) do
+			if typeof(value) == "table" then
+				traverseEnum(value)
+			else
+				self:createEvent(value)
+				self.allowedEventNames[value] = true
+			end
+		end
+	end
 
-    -- Otherwise, warn if the event doesn't exist in ReplicatedStorage
-    warn("[eventName] Event not found", eventName)
+	traverseEnum(RemoteEventsEnum)
+end
 
-    return nil
+function RemoteEventsManager:createEvent(eventName)
+	if ReplicatedStorage:FindFirstChild(eventName) then return end
+
+	if RunService:IsClient() then
+		warn(`[RemoteEventsManager] Client tried to create RemoteEvent: {eventName}`)
+		return
+	end
+
+	local newEvent = Instance.new("RemoteEvent")
+	newEvent.Name = eventName
+	newEvent.Parent = ReplicatedStorage
+end
+
+function RemoteEventsManager:getEvent(eventName)
+	assert(eventName, "[RemoteEventsManager] Event name required")
+	assert(self.allowedEventNames[eventName], `[RemoteEventsManager] '{eventName}' is not in RemoteEventsEnum`)
+
+	local event = ReplicatedStorage:FindFirstChild(eventName)
+	assert(event and event:IsA("RemoteEvent"), `[RemoteEventsManager] Event not found or invalid: {eventName}`)
+
+	return event
+end
+
+function RemoteEventsManager.getEventStatic(eventName)
+	return RemoteEventsManager.new():getEvent(eventName)
 end
 
 return RemoteEventsManager
