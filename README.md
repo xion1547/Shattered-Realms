@@ -175,4 +175,3 @@ In your terminal (within your project directory):
 ---
 
 Happy building! 🚀
-```
