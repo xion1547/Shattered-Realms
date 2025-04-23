@@ -40,6 +40,7 @@ Rojo is a tool that syncs your local files with Roblox Studio.
   👉 [https://github.com/rojo-rbx/rojo/releases](https://github.com/rojo-rbx/rojo/releases)
 - Add it to your system PATH (optional but recommended).
 
+- You probably want to download the Windows Version, then move it to a directory of your choice.
 ![image](https://github.com/user-attachments/assets/a8071d98-ab67-43d0-bb0d-5179c29aba59)
 
 
