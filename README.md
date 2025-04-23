@@ -1,9 +1,7 @@
 # Shattered-Realms
 Roblox
 
----
 
-```
 # 🛠️ Setting Up Roblox Game Development with Rojo + VSCode
 
 This guide walks you through setting up your development environment using **Rojo**,
