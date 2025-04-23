@@ -3,10 +3,11 @@ Roblox
 
 ---
 
-```markdown
+```
 # 🛠️ Setting Up Roblox Game Development with Rojo + VSCode
 
-This guide walks you through setting up your development environment using **Rojo**, **Visual Studio Code**, and **Roblox Studio** for a modular and scalable workflow.
+This guide walks you through setting up your development environment using **Rojo**,
+**Visual Studio Code**, and **Roblox Studio** for a modular and scalable workflow.
 
 ---
 
