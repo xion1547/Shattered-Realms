@@ -1,5 +1,3 @@
----
-
 # Signal System Documentation
 
 This documentation describes how to use the signal system implemented in this project. The system is made up of the following key components:
