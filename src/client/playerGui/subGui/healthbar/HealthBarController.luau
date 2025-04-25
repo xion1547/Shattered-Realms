@@ -1,4 +1,4 @@
--- src/client/gui/player/subGui/HealthBarController.lua
+-- src/client/gui/player/subGui/healthbar/HealthBarController.lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RemoteEventsManager = require(ReplicatedStorage:WaitForChild("remoteEvents"):WaitForChild("RemoteEventsManager"))
 local RemoteEventsEnum = require(ReplicatedStorage:WaitForChild("remoteEvents"):WaitForChild("RemoteEventsEnum"))

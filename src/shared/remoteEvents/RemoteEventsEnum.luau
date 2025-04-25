@@ -2,6 +2,7 @@
 local RemoteEventsEnum = {
 	Player = {
 		HealthUpdate = "Player_HealthUpdate",
+		HealthUpdateRequest = "Player_HealthUpdateRequest",
 		GoldUpdate = "Player_GoldUpdate",
 		Joined = "Player_Joined",
 		LevelUp = "Player_LevelUp",

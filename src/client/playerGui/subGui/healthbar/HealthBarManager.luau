@@ -1,5 +1,6 @@
--- src/client/gui/player/subGui/HealthBarManager.lua
+-- src/client/gui/player/subGui/healthbar/HealthBarManager.lua
 local HealthBarController = require(script.Parent.HealthBarController)
+local HealthBarSystem = require(script.Parent.HealthBarSystem)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local BaseManager = require(ReplicatedStorage:WaitForChild("utils"):WaitForChild("BaseManager"))
 local TweenUtil = require(script.Parent.Parent.Parent.Parent.utils.TweenUtil)
@@ -9,7 +10,7 @@ local HealthBarManager = {}
 HealthBarManager.__index = HealthBarManager
 
 function HealthBarManager.newManager()
-    return BaseManager.newManager(HealthBarManager, HealthBarController)
+    return BaseManager.newManager(HealthBarManager, HealthBarController, HealthBarSystem)
 end
 
 function HealthBarManager:init(parent)
