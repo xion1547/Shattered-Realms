@@ -1,5 +1,3 @@
-Here's a README file based on the provided documentation:
-
 ---
 
 # Signal System Documentation
@@ -167,5 +165,3 @@ This system provides an organized, flexible, and maintainable way to handle sign
 With this system in place, your project will be better structured and maintainable, with clear communication between components through signals.
 
 ---
-
-Let me know if you need any adjustments or additional details for the README!
