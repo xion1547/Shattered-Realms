@@ -1,4 +1,4 @@
--- src/server/shared/utils/signal/Signal.lua
+-- src/shared/utils/signal/Signal.lua
 local Signal = {}
 Signal.__index = Signal
 

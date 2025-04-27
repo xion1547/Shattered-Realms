@@ -3,7 +3,8 @@ local ServerManager = require(game.ServerScriptService:WaitForChild("Server"):Wa
 
 -- 🔄 onConnect: Load only the modules you want on player join
 local function onConnect()
-	ServerManager:init() -- Initialize the server manager and its components
+	local serverManager = ServerManager.new() -- Create a new instance of ServerManager
+	serverManager:init() -- Initialize the server manager
 	print("[Client] RemoteEventsManager initialized.")
 end
 

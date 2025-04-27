@@ -3,11 +3,11 @@ local PlayerEntity = {}
 PlayerEntity.__index = PlayerEntity
 
 -- Constructor for PlayerEntity object
-function PlayerEntity.new(playerId)
+function PlayerEntity.new(player)
     local self = setmetatable({}, PlayerEntity)
 
     -- Basic player state
-    self.playerId = playerId
+    self.playerId = player.UserId
     self.health = 100
     self.maxHealth = 100
     self.gold = 0

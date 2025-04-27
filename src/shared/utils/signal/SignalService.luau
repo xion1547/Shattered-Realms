@@ -1,4 +1,4 @@
--- src/server/shared/utils/signal/SignalService.lua
+-- src/shared/utils/signal/SignalService.lua
 local SignalService = {}
 SignalService.__index = SignalService
 local instance
