@@ -142,8 +142,8 @@ Use this to **fire** and **get** signals anywhere.
 local SignalService = require(PATH_TO_SignalService):getInstance()
 
 -- Fire a signal
-The mySignalEnum is from the earlier example usage.
-You can always just call it directly like: SignalEnum.getInstance():getEnums().Player.EXP.OnLevelUp
+-- The mySignalEnum is from the earlier example usage.
+-- You can always just call it directly like: SignalEnum.getInstance():getEnums().Player.EXP.OnLevelUp
 SignalService:fireSignal(mySignalEnum, player, newLevel)
 
 -- Get a signal manually
