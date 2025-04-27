@@ -35,6 +35,7 @@ function ServerManager:init()
 	-- Initialize SignalEnum (Singleton or just once)
 	local signalEnumInstance = SignalEnum.new(GlobalRegistry)
 	signalEnumInstance:initialize()
+    -- Auto-connect all signals in the GlobalRegistry
     SignalHelper.AutoConnectAll(GlobalRegistry)
 
     local playerManager = PlayerManager.new() -- Create a new instance of PlayerManager

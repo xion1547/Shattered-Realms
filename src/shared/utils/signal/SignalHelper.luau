@@ -79,10 +79,9 @@ function SignalHelper.ConnectSignal(pathParts, signal, systemRoot)
     
     local modulePath = systemRoot
     local traversalLog = {modulePath:GetFullName()}
-    local foundSubsystem = false
 
-    -- Traverse path with subsystem awareness
-    for i, part in ipairs(subPathParts) do
+    -- Traverse path with subsystem handling
+    for _, part in ipairs(subPathParts) do
         -- First try exact case match
         local nextFolder = modulePath:FindFirstChild(part)
         
@@ -104,41 +103,54 @@ function SignalHelper.ConnectSignal(pathParts, signal, systemRoot)
         modulePath = nextFolder
         table.insert(traversalLog, modulePath:GetFullName())
 
-        -- Special case: Only enter subSystem if we're not at the manager level
-        -- (i.e., don't enter subSystem for the immediate parent of the signal)
-        if i < #subPathParts then
-            local subSystem = modulePath:FindFirstChild("subSystem")
-            if subSystem then
-                modulePath = subSystem
-                foundSubsystem = true
-                table.insert(traversalLog, "-> subSystem:" .. modulePath:GetFullName())
-            end
+        -- Always check for subSystem after entering each folder
+        local subSystem = modulePath:FindFirstChild("subSystem")
+        if subSystem then
+            modulePath = subSystem
+            table.insert(traversalLog, "-> subSystem:" .. modulePath:GetFullName())
         end
     end
 
     -- First try finding manager in current path
     local managerModule = modulePath:FindFirstChild(managerName)
     
-    -- If not found and we're in a subsystem, try parent directory
-    if not managerModule and foundSubsystem then
-        local parentPath = modulePath.Parent
-        managerModule = parentPath:FindFirstChild(managerName)
+    -- If not found, check if we're in a subsystem and look in parent
+    if not managerModule and modulePath.Name == "subSystem" then
+        managerModule = modulePath.Parent:FindFirstChild(managerName)
         if managerModule then
-            modulePath = parentPath
-            table.insert(traversalLog, "<- exited subSystem")
+            modulePath = modulePath.Parent
+            table.insert(traversalLog, "<- exited subSystem to find manager")
+        end
+    end
+
+    if not managerModule then
+        -- Final attempt: look for manager in original system path
+        local originalSystemPath = systemRoot
+        for _, part in ipairs(subPathParts) do
+            originalSystemPath = originalSystemPath:FindFirstChild(part)
+            if not originalSystemPath then break end
+        end
+        
+        if originalSystemPath then
+            managerModule = originalSystemPath:FindFirstChild(managerName)
+            if managerModule then
+                modulePath = originalSystemPath
+                table.insert(traversalLog, "-> found manager in main system path")
+            end
         end
     end
 
     if not managerModule then
         warn(string.format(
-            "[SignalHelper] Manager module '%s' not found under %s (path: %s)",
+            "[SignalHelper] Manager module '%s' not found (searched: %s) (path: %s)",
             managerName,
-            modulePath:GetFullName(),
+            table.concat(traversalLog, ", "),
             signalPath
         ))
         return
     end
 
+    -- Rest of the connection logic remains the same
     local manager
     local success, err = pcall(function()
         manager = require(managerModule)
@@ -149,15 +161,10 @@ function SignalHelper.ConnectSignal(pathParts, signal, systemRoot)
         return
     end
 
-    if not manager then
-        warn("[SignalHelper] Manager module returned nil:", managerName)
-        return
-    end
-
     local handler = manager[methodName]
     if typeof(handler) ~= "function" then
         warn(string.format(
-            "[SignalHelper] Handler method '%s' not found or invalid in '%s' (path: %s)",
+            "[SignalHelper] Handler method '%s' not found in '%s' (path: %s)",
             methodName,
             managerName,
             signalPath
