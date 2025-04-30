@@ -9,21 +9,21 @@
 
     "ServerScriptService": {
       "Server": {
-        "$path": "src/server"
+        "$path": "src/gameModes/dungeon/server"
       }
     },
 
     "StarterPlayer": {
       "StarterPlayerScripts": {
         "Client": {
-          "$path": "src/client"
+          "$path": "src/gameModes/dungeon/client"
         }
       }
     },
 
     "StarterGui": {
       "UI": {
-        "$path": "ui"
+        "$path": "src/gameModes/dungeon/ui"
       }
     },
 

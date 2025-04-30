@@ -38,7 +38,7 @@ function SignalService:fireSignal(signalName, ...)
 end
 
 -- Singleton instance for SignalService
-function SignalService:getInstance()
+function SignalService.getInstance()
     if not instance then
         warn("[SignalService] Instance has not been initialized yet. Creating new instance.")
         instance = SignalService.new()

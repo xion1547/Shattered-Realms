@@ -1,0 +1,330 @@
+{
+  "name": "Shattered-Realms",
+  "className": "DataModel",
+  "filePaths": ["dungeon.project.json"],
+  "children": [
+    {
+      "name": "ReplicatedStorage",
+      "className": "ReplicatedStorage",
+      "children": [
+        {
+          "name": "Types",
+          "className": "ModuleScript",
+          "filePaths": ["src/shared\\Types.luau"]
+        },
+        {
+          "name": "remoteEvents",
+          "className": "Folder",
+          "children": [
+            {
+              "name": "RemoteEventsEnum",
+              "className": "ModuleScript",
+              "filePaths": ["src/shared\\remoteEvents\\RemoteEventsEnum.luau"]
+            },
+            {
+              "name": "RemoteEventsManager",
+              "className": "ModuleScript",
+              "filePaths": [
+                "src/shared\\remoteEvents\\RemoteEventsManager.luau"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "uiTemplates",
+          "className": "Folder",
+          "children": [
+            {
+              "name": "playerGui",
+              "className": "Folder",
+              "children": [
+                {
+                  "name": "HealthBar",
+                  "className": "ModuleScript",
+                  "filePaths": [
+                    "src/shared\\uiTemplates\\playerGui\\HealthBar.luau"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "utils",
+          "className": "Folder",
+          "children": [
+            {
+              "name": "BaseManager",
+              "className": "ModuleScript",
+              "filePaths": ["src/shared\\utils\\BaseManager.luau"]
+            },
+            {
+              "name": "ComponentLoader",
+              "className": "ModuleScript",
+              "filePaths": ["src/shared\\utils\\ComponentLoader.luau"]
+            },
+            {
+              "name": "signal",
+              "className": "Folder",
+              "children": [
+                {
+                  "name": "GlobalRegistry",
+                  "className": "ModuleScript",
+                  "filePaths": [
+                    "src/shared\\utils\\signal\\GlobalRegistry.luau"
+                  ]
+                },
+                {
+                  "name": "Signal",
+                  "className": "ModuleScript",
+                  "filePaths": ["src/shared\\utils\\signal\\Signal.luau"]
+                },
+                {
+                  "name": "SignalEnum",
+                  "className": "ModuleScript",
+                  "filePaths": ["src/shared\\utils\\signal\\SignalEnum.luau"]
+                },
+                {
+                  "name": "SignalHelper",
+                  "className": "ModuleScript",
+                  "filePaths": ["src/shared\\utils\\signal\\SignalHelper.luau"]
+                },
+                {
+                  "name": "SignalService",
+                  "className": "ModuleScript",
+                  "filePaths": ["src/shared\\utils\\signal\\SignalService.luau"]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ServerScriptService",
+      "className": "ServerScriptService",
+      "children": [
+        {
+          "name": "Server",
+          "className": "Folder",
+          "children": [
+            {
+              "name": "Main",
+              "className": "Script",
+              "filePaths": ["src/gameModes/dungeon/server\\Main.server.luau"]
+            },
+            {
+              "name": "entities",
+              "className": "Folder",
+              "children": [
+                {
+                  "name": "PlayerEntity",
+                  "className": "ModuleScript",
+                  "filePaths": [
+                    "src/gameModes/dungeon/server\\entities\\PlayerEntity.luau"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "globalManagers",
+              "className": "Folder",
+              "children": [
+                {
+                  "name": "ServerManager",
+                  "className": "ModuleScript",
+                  "filePaths": [
+                    "src/gameModes/dungeon/server\\globalManagers\\ServerManager.luau"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "system",
+              "className": "Folder",
+              "children": [
+                {
+                  "name": "player",
+                  "className": "Folder",
+                  "children": [
+                    {
+                      "name": "PlayerManager",
+                      "className": "ModuleScript",
+                      "filePaths": [
+                        "src/gameModes/dungeon/server\\system\\player\\PlayerManager.luau"
+                      ]
+                    },
+                    {
+                      "name": "subSystem",
+                      "className": "Folder",
+                      "children": [
+                        {
+                          "name": "healthbar",
+                          "className": "Folder",
+                          "children": [
+                            {
+                              "name": "HealthBarController",
+                              "className": "ModuleScript",
+                              "filePaths": [
+                                "src/gameModes/dungeon/server\\system\\player\\subSystem\\healthbar\\HealthBarController.luau"
+                              ]
+                            },
+                            {
+                              "name": "HealthBarManager",
+                              "className": "ModuleScript",
+                              "filePaths": [
+                                "src/gameModes/dungeon/server\\system\\player\\subSystem\\healthbar\\HealthBarManager.luau"
+                              ]
+                            },
+                            {
+                              "name": "HealthBarSystem",
+                              "className": "ModuleScript",
+                              "filePaths": [
+                                "src/gameModes/dungeon/server\\system\\player\\subSystem\\healthbar\\HealthBarSystem.luau"
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "StarterPlayer",
+      "className": "StarterPlayer",
+      "children": [
+        {
+          "name": "StarterPlayerScripts",
+          "className": "StarterPlayerScripts",
+          "children": [
+            {
+              "name": "Client",
+              "className": "Folder",
+              "children": [
+                {
+                  "name": "Main",
+                  "className": "LocalScript",
+                  "filePaths": [
+                    "src/gameModes/dungeon/client\\Main.client.luau"
+                  ]
+                },
+                {
+                  "name": "globalManagers",
+                  "className": "Folder",
+                  "children": [
+                    {
+                      "name": "ClientManager",
+                      "className": "ModuleScript",
+                      "filePaths": [
+                        "src/gameModes/dungeon/client\\globalManagers\\ClientManager.luau"
+                      ]
+                    },
+                    {
+                      "name": "UIManager",
+                      "className": "ModuleScript",
+                      "filePaths": [
+                        "src/gameModes/dungeon/client\\globalManagers\\UIManager.luau"
+                      ]
+                    },
+                    {
+                      "name": "UIRootGUI",
+                      "className": "ModuleScript",
+                      "filePaths": [
+                        "src/gameModes/dungeon/client\\globalManagers\\UIRootGUI.luau"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "playerGui",
+                  "className": "Folder",
+                  "children": [
+                    {
+                      "name": "PlayerManager",
+                      "className": "ModuleScript",
+                      "filePaths": [
+                        "src/gameModes/dungeon/client\\playerGui\\PlayerManager.luau"
+                      ]
+                    },
+                    {
+                      "name": "subGui",
+                      "className": "Folder",
+                      "children": [
+                        {
+                          "name": "healthbar",
+                          "className": "Folder",
+                          "children": [
+                            {
+                              "name": "HealthBarController",
+                              "className": "ModuleScript",
+                              "filePaths": [
+                                "src/gameModes/dungeon/client\\playerGui\\subGui\\healthbar\\HealthBarController.luau"
+                              ]
+                            },
+                            {
+                              "name": "HealthBarManager",
+                              "className": "ModuleScript",
+                              "filePaths": [
+                                "src/gameModes/dungeon/client\\playerGui\\subGui\\healthbar\\HealthBarManager.luau"
+                              ]
+                            },
+                            {
+                              "name": "HealthBarSystem",
+                              "className": "ModuleScript",
+                              "filePaths": [
+                                "src/gameModes/dungeon/client\\playerGui\\subGui\\healthbar\\HealthBarSystem.luau"
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "systems",
+                  "className": "Folder",
+                  "children": [
+                    {
+                      "name": "CameraSystem",
+                      "className": "ModuleScript",
+                      "filePaths": [
+                        "src/gameModes/dungeon/client\\systems\\CameraSystem.luau"
+                      ]
+                    },
+                    {
+                      "name": "InputSystem",
+                      "className": "ModuleScript",
+                      "filePaths": [
+                        "src/gameModes/dungeon/client\\systems\\InputSystem.luau"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "utils",
+                  "className": "Folder",
+                  "children": [
+                    {
+                      "name": "TweenUtil",
+                      "className": "ModuleScript",
+                      "filePaths": [
+                        "src/gameModes/dungeon/client\\utils\\TweenUtil.luau"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
