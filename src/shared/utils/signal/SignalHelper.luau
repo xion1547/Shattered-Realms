@@ -181,7 +181,7 @@ function SignalHelper.ConnectSignal(pathParts, signal, systemRoot)
     )
 
     if connection then
-        SignalService:getInstance():registerSignal(signalPath, signal)
+        SignalService.getInstance():registerSignal(signalPath, signal)
     end
 end
 

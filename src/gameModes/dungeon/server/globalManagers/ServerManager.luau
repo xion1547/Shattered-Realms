@@ -8,6 +8,9 @@ local RemoteEventsManager = require(ReplicatedStorage:WaitForChild("remoteEvents
 local SignalService = require(ReplicatedStorage:WaitForChild("utils"):WaitForChild("signal"):WaitForChild("SignalService"))
 local SignalEnum = require(ReplicatedStorage:WaitForChild("utils"):WaitForChild("signal"):WaitForChild("SignalEnum"))
 local SignalHelper = require(ReplicatedStorage:WaitForChild("utils"):WaitForChild("signal"):WaitForChild("SignalHelper"))
+local EventTapeManager = require(ReplicatedStorage:WaitForChild("eventTape"):WaitForChild("EventTapeManager"))
+local EventTapeController = require(ReplicatedStorage:WaitForChild("eventTape"):WaitForChild("EventTapeController"))
+local EventTapeSystem = require(ReplicatedStorage:WaitForChild("eventTape"):WaitForChild("EventTapeSystem"))
 
 local ServerManager = {}
 ServerManager.__index = ServerManager
@@ -41,6 +44,10 @@ function ServerManager:init()
     local playerManager = PlayerManager.new() -- Create a new instance of PlayerManager
 	self.managers["PlayerManager"] = playerManager -- Store the player manager in the UIManager
 	playerManager:init() -- Initialize the player manager with the root GUI
+
+    -- Initialize the EventTape
+    local serverEventTapeManager = EventTapeManager.new()
+    serverEventTapeManager:init() -- Initialize the event tape manager
 
     self:_bindPlayerEvents() -- Bind player events
 
