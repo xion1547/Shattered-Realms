@@ -12,12 +12,4 @@ function HealthBarController.new(healthBarManager)
     return self
 end
 
-function HealthBarController:initialize()
-    -- Listen to the remote event for health updates
-    local healthUpdateEvent = RemoteEventsManager.getEventStatic(RemoteEventsEnum.Server.Player.HealthUpdate)
-    healthUpdateEvent.OnClientEvent:Connect(function(healthPercent)
-        self.healthBarManager:updateHealth(healthPercent)  -- Call updateHealth on the manager
-    end)
-end
-
 return HealthBarController

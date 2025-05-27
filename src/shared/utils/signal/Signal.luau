@@ -40,6 +40,7 @@ function Signal:Fire(listener, ...)
         warn("[Signal] The provided listener was not found in the signal's listeners.")
     end
 end
+
 -- Disconnect a specific listener from the signal
 function Signal:Disconnect(listener)
     if self._destroyed then
