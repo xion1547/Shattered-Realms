@@ -1,0 +1,37 @@
+-- src/gameModes/dungeon/server/resolution/steps/ParryStep.luau
+--
+-- INTERCEPT phase. See Architecture-Reference.md Part 11.3.
+--
+-- Parry is TWO mechanically separate things, and fusing them is what would
+-- produce the ParryService this architecture rules out:
+--
+--   * parry as DEFENCE  -- this step. Negates incoming damage.
+--   * parry as TRIGGER  -- the counter, stagger and debuff. Those are
+--                          content-declared effects dispatched AFTER commit,
+--                          not part of resolving the incoming attack.
+--
+-- This step only flags the context. It does NOT fire the counterattack --
+-- that would be a step mutating the world, and the counter would then run
+-- nested inside the resolution it was triggered by. CombatService sequences
+-- it after resolution #1 has fully committed.
+--
+-- The parry WINDOW is a Buff (`duration = "UNTIL_HIT"`, already declared in
+-- Part 7's Buff structure), not a StateFlag: StateFlags are absolute gates
+-- every domain must check, while a parry window is a conditional,
+-- combat-local modifier.
+
+return function(ctx)
+    -- TODO: read the window and match it against timing/arc.
+    --
+    -- local window = BuffService:get(ctx.target, "PARRY_WINDOW")
+    -- if not window then return end
+    -- if not ParryDefinitions.matches(window, ctx) then return end
+    --
+    -- ctx.damage = 0
+    -- ctx.parried = true
+    -- ctx.parryDefId = window.defId
+    --
+    -- for _, effect in ipairs(ParryDefinitions[window.defId].onSuccess) do
+    --     ctx:addEffect(effect)
+    -- end
+end

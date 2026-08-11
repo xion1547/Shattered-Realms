@@ -1,220 +1,113 @@
-# 📣 Signal System Documentation
+# Signal System
 
-This Signal System provides a highly structured, modular, and scalable event-handling architecture for your Roblox project.  
-It is built with multiple layers of abstraction, designed to keep your **Signal**, **Registry**, **Manager**, and **Service** code cleanly separated.
+Fact broadcast for this project. Canonical spec: `docs/Architecture-Reference.md`,
+Part 11.5. This file is the practical usage guide; where the two disagree, the
+Architecture Reference wins.
 
----
+## What a Signal is
 
-## ✨ Overview
+A Signal announces that something **has already, unconditionally happened**.
+It carries no validation, makes no decision, returns nothing, and every
+listener connected to it is called. Nothing connected to a Signal is ever
+asked to approve or reject anything — that decision was already made and
+finished by a Service before `Fire` was reached.
 
-| Component         | Purpose |
-|-------------------|---------|
-| `Signal`          | Core class for connecting and firing individual signals. |
-| `GlobalRegistry`  | Houses **all** signals organized by system path. |
-| `SignalHelper`    | Automatically wires signals to the correct Manager methods based on directory structure. |
-| `SignalEnum`      | Auto-generates an enum structure to reference signals by path safely. |
-| `SignalService`   | Central service for firing, getting, and managing signals globally. |
+**A Signal never crosses the client/server boundary.** The class lives in
+`shared/` because both sides use it, not because a signal is ever
+transmitted. The wire is EventTape, in both directions. Client and server
+each get their own module state and their own vocabulary.
 
----
+## Files
 
-## 🏗️ Project Structure
+| File | Purpose |
+|---|---|
+| `Signal.luau` | The broadcast primitive. Constructed by SignalService, not by gameplay code. `ReplicatedStorage` — both sides use the class. |
+| `SignalService.luau` | The broker: `init` / `declare` / `on` / `validate`. `ReplicatedStorage`, with **separate module state per side**. |
+| `serverShared/signal/SignalVocabulary.luau` | The server vocabulary — the flat list of legal fact names. **`ServerStorage`**, never replicated: it is the complete list of the game's internal event names. The client keeps its own. |
 
-Signals must live inside the `src/signals/GlobalRegistry.lua` and correspond to the correct **Manager** in the `src/system/` directory.
+## The three rules
 
-Example:
+1. **A fact has exactly one owner.** `declare()` returns the only
+   fire-capable reference. Keep it in a local or a private field. If two
+   things can fire the same fact, listeners cannot trust it.
+2. **Subscribe by name, never by module reference.** `on("Combat.OnKill", fn)`
+   works in a place where `CombatService` does not exist. `require`ing the
+   publisher does not, and that breaks place separation.
+3. **Names come from a vocabulary file.** Facts are not created ad hoc.
+   `declare` and `on` both reject a name that isn't in the loaded vocabulary.
 
-```
-src/
- ├── system/
- │    └── player/
- │         ├── subSystem/
- │         │     └── EXP/
- │         │         └── EXPManager.luau
- │         └── PlayerManager.luau
- └── signals/
-      └── GlobalRegistry.lua
-```
-
----
-
-## ⚡ Signal (Base Class)
-
-**Path:** `src/shared/utils/signal/Signal.lua`
-
-The lowest level event system.  
-It provides:
-
-- `Connect(listenerFunction)`
-- `Fire(listenerFunction?, ...)`
-- `Disconnect(listenerFunction)`
-- `DisconnectAll()`
-- `Destroy()`
-
-Example usage:
+## Usage
 
 ```lua
-local mySignal = Signal.new()
+local SignalService = require(ReplicatedStorage.utils.signal.SignalService)
+local ServerSignals = require(ServerStorage.Shared.signal.SignalVocabulary)
 
-local function onFired(arg)
-    print("Signal fired with:", arg)
-end
+-- 1. First step of boot, before anything declares or subscribes.
+--    Pass every vocabulary this place uses.
+SignalService.init({ ServerSignals, DungeonSignals })
 
-mySignal:Connect(onFired)
-mySignal:Fire(nil, "Hello World!")
+-- 2. The owning Service claims its facts and keeps the references private.
+local OnKill = SignalService.declare("Combat.OnKill")
+
+-- 3. Anything else subscribes by name. Legal before the owner has declared,
+--    and legal in a place where the owner does not exist at all.
+local conn = SignalService.on("Combat.OnKill", function(attacker, victim)
+    -- react
+end)
+
+-- 4. After every Service has booted, before gameplay.
+SignalService.validate()
+
+-- Firing: only the owner can, because only the owner has the reference.
+OnKill:Fire(attacker, victim)
+
+-- Unsubscribing: hold the handle.
+conn:Disconnect()
 ```
 
----
+## Boot validation
 
-## 📚 GlobalRegistry
+`validate()` checks both directions and fails once, aggregated:
 
-**Path:** `src/signals/GlobalRegistry.lua`
+- a name **subscribed to but never declared** — a listener waiting on
+  something that will never fire
+- a name **in the vocabulary but never declared** — the vocabulary claiming a
+  fact exists here when nothing produces it
 
-A tree structure that organizes all signals by system.  
-Example registry:
+Both are silent no-ops in production and boot failures here, which is the
+point. Same two-way discipline the Architecture Reference applies to place
+manifests (Part 13).
 
-```lua
-local GlobalRegistry = {
-    Player = {
-        EXP = {
-            OnLevelUp = Signal.new(),
-            OnEXPChanged = Signal.new(),
-        },
-        Inventory = {
-            OnItemAdded = Signal.new(),
-        },
-    },
-}
-```
+## Gotchas
 
-> All signals must be created in the correct structure here for automatic wiring to work.
+- **`Connect` returns a handle.** Hold it if you will ever need to
+  disconnect. There is no `Disconnect(fn)` — a wrapped closure could never be
+  removed that way.
+- **Duplicate connections are allowed.** Connecting the same function twice
+  fires it twice. Earlier versions silently ignored duplicates, which hid
+  double-registration bugs.
+- **Listener order is connection order**, which is boot order — deterministic
+  but implicit. A listener must not mutate state another listener on the same
+  signal reads. Needing ordered reactions means the relationship was
+  inherent, not optional — use a direct call or a pipeline (Part 11.4).
+- **A failing listener is warned and skipped**, never rethrown. The fact is
+  true regardless of who mishandles it.
+- **There is no `get(name)`.** Handing back the Signal would hand back
+  `Fire`, which is the one thing this module exists to withhold.
 
----
+## Naming
 
-## 🔌 SignalHelper
+Every name reads like a past-tense fact: `OnHit`, `OnDied`, `OnJoined`. If a
+name reads like a command (`DoAttack`, `RequestPickup`), a Request or
+Intention has drifted into Signal's territory and belongs in a direct Service
+call instead.
 
-**Path:** `src/shared/utils/signal/SignalHelper.lua`
+## Removed
 
-Responsible for **auto-connecting** signals to manager methods!
-
-- **`SignalHelper.AutoConnectAll(GlobalRegistry)`**  
-  Traverses the registry, finds the correct Manager module based on the system folder structure, and connects each signal to the corresponding method.
-
-Example flow:
-
-```lua
-SignalHelper.AutoConnectAll(GlobalRegistry)
-```
-
-When it finds `Player.EXP.OnLevelUp`, it automatically searches for:
-
-> `system/player/subSystem/EXP/EXPManager.luau` ➔ method `OnLevelUp`
-
----
-
-## 🗺️ SignalEnum
-
-**Path:** `src/shared/utils/signal/SignalEnum.lua`
-
-Generates a **typed enum tree** for safe reference to your signals by path.
-
-Example usage:
-
-```lua
-local SignalEnum = require(PATH_TO_SignalEnum)
-local enums = SignalEnum.getInstance():getEnums()
-
-local mySignalEnum = enums.Player.EXP.OnLevelUp
-```
-
-No more typos like `"Player.EXP.OnLevelUp"` — you get real auto-completion and strict references!
-
----
-
-## 🛰️ SignalService
-
-**Path:** `src/shared/utils/signal/SignalService.lua`
-
-Top-layer abstraction for interacting with signals globally.
-
-Use this to **fire** and **get** signals anywhere.
-
-```lua
-local SignalService = require(PATH_TO_SignalService):getInstance()
-
--- Fire a signal
--- The mySignalEnum is from the earlier example usage.
--- You can always just call it directly like: SignalEnum.getInstance():getEnums().Player.EXP.OnLevelUp
-SignalService:fireSignal(mySignalEnum, player, newLevel)
-
--- Get a signal manually
-local signal = SignalService:getSignal("Player.Inventory.OnItemAdded")
-if signal then
-    signal:Connect(function(item)
-        print("Item added to inventory:", item)
-    end)
-end
-```
-
-✅ Centralized  
-✅ Consistent  
-✅ Safe
-
----
-
-## 🛠️ Full Usage Example
-
-```lua
--- Startup: Auto-connect all signals
-local GlobalRegistry = require(PATH_TO_GlobalRegistry)
-local SignalHelper = require(PATH_TO_SignalHelper)
-local SignalEnum = require(PATH_TO_SignalEnum)
-local SignalService = require(PATH_TO_SignalService)
-
--- Initialize Enum System
-SignalEnum.new(GlobalRegistry)
-
--- Auto-connect all signals to the managers
-SignalHelper.AutoConnectAll(GlobalRegistry)
-
--- Example: Fire a level-up signal when a player levels up
-SignalService:getInstance():fireSignal(
-    SignalEnum.getInstance():getEnums().Player.EXP.OnLevelUp,
-    player,
-    newLevel
-)
-```
-
----
-
-## ⚙️ Key Rules
-
-- **All signals must exist in `GlobalRegistry`.**
-- **Your `system/` folder structure must match the registry tree.**
-- **Manager module names must follow the convention:**  
-  `{FolderName}Manager.luau`
-- **All handler methods must match the signal name exactly** (case-sensitive).
-- **Call `SignalEnum.new(GlobalRegistry)` at startup.**
-- **Call `SignalHelper.AutoConnectAll(GlobalRegistry)` after that.**
-
----
-
-## 🧹 Best Practices
-
-- Keep systems modular by separating into subSystems if needed (`player/subSystem/EXP/`).
-- Only call `SignalService:fireSignal()` from your gameplay scripts — avoid directly firing `Signal` objects manually.
-- Use `SignalEnum` enums to reference signals safely and consistently across the project.
-- Never manually `Connect()` to raw signals unless absolutely necessary; prefer automatic SignalHelper wiring.
-
----
-
-# 🚀 Ready to use.
-
-This system gives you:
-
-✅ **Centralized signal management**  
-✅ **Auto-wiring of signals**  
-✅ **Safe enums for event references**  
-✅ **Global access and firing**  
-✅ **Flexible directory structure**
-
----
+`SignalHelper` and `SignalEnum` are deleted. `SignalHelper` resolved a
+registry path to exactly one Manager method, which meant it structurally
+supported one listener per signal — the degenerate case an explicit
+`:Connect()` already handles in one greppable line — while making runtime
+behaviour depend invisibly on folder layout. `SignalEnum` derived a name list
+by walking live Signal objects; under the vocabulary model the name list *is*
+the source file. See Architecture-Reference.md Part 19.

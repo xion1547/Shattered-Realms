@@ -1,6 +1,26 @@
 # Shattered-Realms
 Roblox
 
+## 📚 Documentation
+
+Read these before changing anything structural. They exist so decisions are
+made once instead of re-derived.
+
+| Document | What it owns |
+|---|---|
+| [Gameplay-Design.md](docs/Gameplay-Design.md) | **What the game is and why it's fun.** Bosses, combat mitigation, relics, gauntlet, gacha, progression. Not how any of it is built. |
+| [Architecture-Reference.md](docs/Architecture-Reference.md) | **How the server is built, and why.** The single source of truth for layers, services, entities, security, and every settled design decision. Read top to bottom when returning after time away. |
+| [Client-Architecture.md](docs/Client-Architecture.md) | **How the client is built.** Widgets, bindings, presenters, prediction. The server document stays authoritative for anything crossing the wire. |
+| [EventTape.md](docs/EventTape.md) | **The implementation map for the EventTape layer.** File map, end-to-end traces, wire protocol, and the recipe for adding an event type. Architecture Part 12 owns the *why*. |
+| [HitDetection.md](docs/HitDetection.md) | **The spatial layer, design and implementation map.** Hit volumes, position history, lag-compensated rewind, and the DETECT phase. Self-contained — no Architecture Part owns this one. |
+| [Client-Architecture-Handoff.md](docs/Client-Architecture-Handoff.md) | Cold-start primer that preceded the client document. Largely superseded by it. |
+| [signalREADME.md](src/shared/utils/signal/signalREADME.md) | The Signal layer up close. |
+
+**Status tags** (`SETTLED` / `PROVISIONAL` / `UNBUILT` / `SUPERSEDED`) appear
+on every section of the architecture documents. They are the difference
+between a decision that survived being attacked and one that merely sounds
+good — read them.
+
 
 # 🛠️ Setting Up Roblox Game Development with Rojo + VSCode
 

@@ -7,6 +7,12 @@
       "$path": "src/shared"
     },
 
+    "ServerStorage": {
+      "Shared": {
+        "$path": "src/serverShared"
+      }
+    },
+
     "ServerScriptService": {
       "Server": {
         "$path": "src/gameModes/dungeon/server"

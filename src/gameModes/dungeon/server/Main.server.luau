@@ -1,12 +1,15 @@
 -- Main.server.luau
-local ServerManager = require(game.ServerScriptService:WaitForChild("Server"):WaitForChild("globalManagers"):WaitForChild("ServerManager"))
 
--- 🔄 onConnect: Load only the modules you want on player join
-local function onConnect()
-	local serverManager = ServerManager.new() -- Create a new instance of ServerManager
-	serverManager:init() -- Initialize the server manager
-	print("[Client] RemoteEventsManager initialized.")
-end
+local serverRoot = game.ServerScriptService:WaitForChild("Server")
 
--- Kick off your custom loading logic
-onConnect()
+local RunTests = require(serverRoot:WaitForChild("tests"):WaitForChild("RunTests"))
+local ServerManager = require(serverRoot:WaitForChild("globalManagers"):WaitForChild("ServerManager"))
+
+-- Tests run BEFORE ServerManager, deliberately. SignalService.init() resets
+-- module state, so the suite would otherwise wipe the live vocabulary and the
+-- declared session facts. Running first also means a module that throws on
+-- first use is reported before anything depends on it. See tests/RunTests.
+RunTests.run()
+
+local serverManager = ServerManager.new()
+serverManager:init()

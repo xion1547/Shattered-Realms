@@ -1,54 +1,44 @@
+-- src/shared/eventTape/event/EventDeserializer.luau
+--
+-- Rebuilds a typed Event from the plain data that came off the wire.
+-- See Architecture-Reference.md Part 12.
+--
+-- ONE SET OF RULES, BOTH DIRECTIONS. It resolves the event class from the
+-- registry and calls the same `Event.build` the fluent builder calls, so a
+-- payload the builder would reject is rejected here too. That property used
+-- to depend on each class remembering to put its checks in a hand-written
+-- `deserialize` rather than in its builder -- and the wire half is the half
+-- that actually matters, since it is the untrusted one.
+--
+-- A PLAIN MODULE, not a class. It holds no state, so there is nothing for an
+-- instance to own. The old one earned its `.new()`: it carried a module cache
+-- and a DataModel root it walked at startup. Declaration checking now happens
+-- once at boot via EventRegistry.validate(), and nothing here gates on it --
+-- what that check covers is static and cannot change while the game runs.
+--
+-- Failures are RETURNED, not raised. Everything here came from a client, so
+-- malformed input is expected traffic: the router rejects the one bad event
+-- and keeps processing the rest of the tape.
+
+local Event = require(script.Parent.Event)
+local EventRegistry = require(script.Parent.EventRegistry)
+
 local EventDeserializer = {}
-EventDeserializer.__index = EventDeserializer
 
-function EventDeserializer.new(moduleRootPath)
-    assert(typeof(moduleRootPath) == "Instance", "moduleRootPath must be an Instance (e.g., ReplicatedStorage.EventTape)")
-    local self = setmetatable({}, EventDeserializer)
-    self._moduleCache = {}
-    self._moduleRoot = moduleRootPath
-    return self
-end
-
--- Preloads all modules into cache (call once at startup)
-function EventDeserializer:preloadModules()
-    for _, module in ipairs(self._moduleRoot:GetDescendants()) do
-        if module:IsA("ModuleScript") and module.Name:match("Event$") then
-            self:_requireModule(module)
-        end
-    end
-end
-
--- Internal: Safely require + cache a module
-function EventDeserializer:_requireModule(module)
-    if self._moduleCache[module] then return self._moduleCache[module] end
-
-    local success, result = pcall(require, module)
-    if not success then
-        warn(`[EventDeserializer] Failed to load module {module.Name}: {result}`)
-        return nil
+function EventDeserializer.deserialize(serialized: any): (Event.Event?, string?)
+    if type(serialized) ~= "table" then
+        return nil, "event payload is not a table"
     end
 
-    assert(type(result) == "table", `Module {module.Name} must return a table`)
-    assert(type(result.deserialize) == "function", `Module {module.Name} must have a deserialize function`)
+    local eventClass = EventRegistry.get(serialized.eventType)
+    if not eventClass then
+        return nil, string.format("unknown eventType: %s", tostring(serialized.eventType))
+    end
 
-        self._moduleCache[module] = result
-    return result
-end
-
--- Main deserialization method
-function EventDeserializer:deserialize(event)
-    local eventType = event:getEventType()
-    assert(type(eventType) == "string" and eventType ~= "", "Event type must be a non-empty string")
-
-    -- Find the module (cached or load dynamically)
-    local moduleName = eventType .. "Event"
-    local module = self._moduleRoot:FindFirstChild(moduleName, true)
-    assert(module, `Event module not found: {moduleName}`)
-
-    local eventModule = self:_requireModule(module)
-    assert(eventModule, `Failed to load module: {moduleName}`)
-
-    return eventModule.deserialize(event)
+    -- No timestamp is read back off the wire. The sender's clock has an
+    -- arbitrary origin and is client-controlled either way; the receiving
+    -- side stamps its own arrival time (EventRouter).
+    return Event.build(eventClass, serialized.subType, serialized.data, serialized.eventId)
 end
 
 return EventDeserializer
