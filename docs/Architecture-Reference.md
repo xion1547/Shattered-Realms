@@ -806,10 +806,19 @@ Signal:Fire() announces the confirmed hit — damage numbers, sounds,
 Both steps follow the exact Part 3 shape (Service decides → Entity mutates →
 Signal announces) — there are simply two of them, back to back, with a
 deliberate delay between. The player has time to react between the telegraph
-announcement and the resolution. This is why boss design across the genre
-leans so heavily on windups, tells, glowing effects, and ground markers —
-they are not purely aesthetic, they are the mechanism that makes server
-authority feel fair despite network latency. `BossAIService` (Part 10) owns
+announcement and the resolution.
+
+**Ordering correction:** an earlier revision of this section called
+telegraphs "not decoration, latency compensation," and the paragraph above
+once claimed windups exist to make server authority feel fair. That
+over-corrects against "purely aesthetic" and lands somewhere misleading.
+**Telegraphs exist for combat readability first** — you see the windup, you
+recognise which attack it is, you choose dodge or parry. That loop is the
+skill of the genre and works identically in single-player games with zero
+latency; Dark Souls and Monster Hunter did not invent windups for networking
+reasons. The latency benefit is a genuine and load-bearing *consequence* —
+it is what licenses resolving NPC attacks with no rewind (see
+`HitDetection.md`) — but it is not the purpose. `BossAIService` (Part 10) owns
 producing both mutations; `CombatService` still owns resolving what the
 Execute step actually does, exactly as it does for player attacks.
 

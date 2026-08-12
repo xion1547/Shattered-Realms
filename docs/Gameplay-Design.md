@@ -116,6 +116,36 @@ boss via a generic **landmark** system.
   end it). Binary is simpler; degrading is more forgiving for a system meant
   to feel like a comfortable assist most of the time.
 
+### Summon Intercept — The Summon As An Offensive Ultimate
+
+**Status: New — direction set, replaces the persistent-pet idea.**
+
+The summon is **not** a companion you keep on the field. It is an
+**ultimate**: spend it, the summon manifests at full size, intercepts the
+boss, and knocks it down.
+
+- **The intercept beats the boss's own defence, on purpose.** If the boss has
+  a parry or redirect, the summon triggers it and comes through anyway. The
+  boss's best defensive tool becomes the setup for its own punish, which is a
+  better beat than simply ignoring the defence.
+- **Guaranteed stagger.** Non-failable, unlike Summon Assist above — this is
+  a spent resource, not a gamble. It ends with the boss `DOWNED` and the
+  party holding a free damage window.
+- **Same sequence engine**, different trigger and different ending. No new
+  system: Summon Assist is player-triggered and failable, Summon Intercept is
+  player-triggered and guaranteed.
+
+**The real cost is animation, and it is combinatorial.** Every
+(summon × target boss) pairing wants a bespoke interception. The answer is
+the one this section already uses for the fail animation: **one shared
+skeleton — manifest, close, connect, knockdown — with a swappable flourish
+per summon.** That turns N × M pieces of content into N + M.
+
+**Deliberately rejected: the summon as a persistent fighting companion.**
+It would be a second AI entity to author, balance, and keep alive, and it
+would dilute the moment. An ultimate that lands once and matters is a better
+use of the same asset than a pet that chips in continuously.
+
 ### Ending Beat
 - Originally conceived as a keyboard-mash contest (God of War style).
 - **Flagged as worth reconsidering:** mash contests reward reflexes/hardware

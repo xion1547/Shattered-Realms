@@ -307,6 +307,31 @@ influence each other through shared facts rather than messages, and the
 volumes aren't close to needing a budget. Behaviour trees, GOAP and utility
 AI — the three dominant shipped approaches — all poll.
 
+**An action queue is a different object, and is not what was cut.** If an
+entity ever needs to commit to a chain — strike, reposition, strike again —
+that is a *plan*, and a plan genuinely cannot collapse into a number.
+
+| | Perception queue (removed) | Action queue |
+|---|---|---|
+| Holds | stimuli that arrived | steps you intend to take |
+| Filled by | the world | the agent itself |
+| Why order matters | it doesn't — accumulators commute | the plan **is** the order |
+
+`Architecture-Reference.md` Part 7 already gives `AIState` a `queued next
+move` field, which is an action queue of depth one. If a boss needs a
+three-step chain, that field grows into a small list on the acting entity.
+Nothing to do with this section.
+
+**Commands between entities are facts, not messages.** A boss directing
+minions writes `facts.commandedTarget`; each minion reads it on its own tick.
+Nothing queues, nothing is missed, and a minion that spawns *later* picks up
+the current order — which a mailbox would get wrong, since a message sent
+before you existed isn't in it. When a fast commander outpaces a slow
+minion's tick, the minion sees only the latest order, and that is correct:
+losing a stale order is the wanted behaviour, where a queue would faithfully
+send a minion diving at something the commander already changed its mind
+about.
+
 ### 3.3 — The transition graph
 
 **What it's for:** per state, which states it can legally transition to and
@@ -674,6 +699,28 @@ the game cheating. Budget roughly 250ms plus worst-case RTT. This is one of
 the few places where latency constrains a *gameplay* number rather than being
 handled underneath it.
 
+### 5.6 — Summon intercept (and why it needs no AI at all)
+
+The player's summon ultimate (`Gameplay-Design.md`) manifests, intercepts the
+boss, beats its parry, and knocks it down. It is listed here because it
+*produces* a stagger, not because it is a boss reaction.
+
+**It requires no AI whatsoever.** No `AIState`, no graph, no perception, no
+target selection — it is a scripted beat with a fixed outcome. Mechanically:
+the supervisor (4.3) drops into `SEQUENCE`, the three machines stop ticking,
+the sequence engine drives, and on completion the boss is placed in `DOWNED`.
+
+The boss's own mitigation is not consulted, because its AI is not running.
+That is what lets the summon come through a parry: there is no parry decision
+to make.
+
+**This resolves an open question from the first draft.** `SEQUENCE` mode was
+listed as unsure whether machines always resume the state they were in, or
+whether a sequence can declare where the boss lands. This case settles it:
+**a sequence must be able to declare a post-sequence state.** Summon intercept
+ends in `DOWNED`, and a transformation cinematic ends somewhere else entirely.
+Default is resume-as-before; an explicit override is available per sequence.
+
 ---
 
 ## Part 6 — Integration: Where This Actually Plugs In
@@ -737,6 +784,74 @@ animation and consumes an outbound diff.
 Boss entities are found the same way every other entity is. Detection returns
 entity tables directly; ids only matter where something crosses the wire.
 
+### Fifty mobs in a room — what is shared and what is per-entity
+
+A dungeon room holding 10–50 mobs needs **no new instances of anything.**
+It's the same shared-versus-per-entity split the codebase already uses three
+times over:
+
+| Thing | How many | Why |
+|---|---|---|
+| `AIService` | **one** | it is the engine that ticks; nothing about it is per-entity |
+| The transition graph | **one per profile** | Content Layer data, read and never written. Fifty goblins share one |
+| `AIState` component | **one per entity** | only this mob's current state name, its timers, its target |
+
+Fifty goblins is one service, one graph table, and fifty small components
+holding roughly `{ state = "CHASE", enteredAt = 12.4, target = <entity> }`.
+
+That is `Overlap` (one shared function table) versus `Spatial` (one per
+entity), and `EnemyTemplates` (one definition) versus `EnemyEntity` (one per
+mob) — the same pattern a third time.
+
+**Trash mobs are the tiered-adoption want (W-16) cashing out.** A goblin
+profile declares three states — `IDLE → CHASE → ATTACK` — with no telegraph,
+no stagger, no memory, no orthogonal machines. The difference between it and
+the seraph is how much profile was written, not which code runs.
+
+**Scope the graph per profile rather than giving every mob the full boss
+graph.** Guards would technically no-op on their own — `Resources:get`
+returns 0 for an id an entity doesn't have, so a stagger guard reading
+`resources:get("Stagger") >= threshold` is simply false forever on a mob with
+no Stagger. That mechanism is real and free.
+
+The reason to scope anyway is `Architecture-Reference.md` Part 13's argument
+pointed at bugs instead of exploiters: **a goblin that structurally cannot
+enter `CASTING` is safer than one that merely shouldn't.** With the full
+graph, a bad guard drops a trash mob into a casting state with nothing
+configured, and you get a frozen goblin and no error. It also keeps things
+readable — debugging a mob whose graph lists twelve states, nine unreachable,
+is worse than one with five.
+
+Adding a capability to a mid-tier mob is still a profile edit and no engine
+change, which is the property worth protecting. When the same five entries
+have been copy-pasted across eight profiles, that is the moment capability
+composition (`capabilities = { "MELEE", "STAGGERABLE" }`, each contributing a
+known set of states and edges, assembled at boot) earns its keep — not
+before, or you are designing a capability system for three profiles.
+
+**A note on which lever expresses "this mob can't do that."** Absence of a
+capability is *legality* — it belongs in the hard filter (4.5), or in the
+graph simply not containing the edge. It is never a utility score of zero.
+Scoring an unavailable ability at 0 makes a weight of 0 mean two different
+things ("cannot" and "strongly prefer not to"), which is precisely what the
+four-stage split exists to prevent.
+
+### The bottleneck is bodies, not decisions
+
+Worth stating because the intuition usually runs the other way. Fifty mobs
+deciding at 4Hz with ~10 guard evaluations each is roughly 2,000 calls per
+second — nothing. `SpatialService` sampling 55 entities at 30Hz is nothing.
+Fifty simultaneous swings is fifty broadphase scans over ~55 candidates,
+which is microseconds.
+
+**The cost is the Roblox instances.** Fifty `Humanoid`s pathfinding is
+genuinely heavy, and that is what will cost frames. Same lesson as the
+pooling discussion: the Lua side is cheap, the Instance side is where the
+expense lives. Trash mobs may not want `Humanoid`s at all — a part with
+simple steering toward a target is dramatically cheaper and, for mobs that
+mostly walk at you and die, indistinguishable to the player. Worth trying
+before assuming fifty is out of reach.
+
 ---
 
 ## Part 7 — What the First Boss Actually Needs
@@ -783,10 +898,14 @@ the Spatial machine only when positioning becomes a real behaviour rather than
 - **Is Awareness a machine or a fact (4.6)?**
 - **`DECIDING` as a state vs. scoring in `onEnter`** — near-equivalent, not
   committed.
-- **What `SEQUENCE` mode preserves on exit (4.3)** — always resume the states
-  they were in, or can a sequence declare a post-sequence override (needed for
-  a transformation cinematic, where resuming as before is wrong on purpose)?
-  Likely both, not yet specified.
+- ~~What `SEQUENCE` mode preserves on exit~~ — **resolved (5.6).** Default is
+  resume-as-before; a sequence may declare an explicit post-sequence state.
+  Summon intercept ends in `DOWNED`, which is the concrete case that settled it.
+- **Do minion deaths feed the boss's stagger meter?** Raised while discussing
+  a boss with adds, not answered. If yes, clearing adds is progress toward the
+  punish window and the fight has two valid strategies. If no, adds are a pure
+  tax and players will resent them. This decides whether the archetype feels
+  good, and it is independent of any mechanism above.
 - **Guard evaluation cadence** — poll every guard every tick, or only
   re-evaluate when a relevant Fact changed? Likely "poll first, optimise if
   profiling says so."
