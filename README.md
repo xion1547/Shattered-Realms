@@ -13,6 +13,7 @@ made once instead of re-derived.
 | [Client-Architecture.md](docs/Client-Architecture.md) | **How the client is built.** Widgets, bindings, presenters, prediction. The server document stays authoritative for anything crossing the wire. |
 | [EventTape.md](docs/EventTape.md) | **The implementation map for the EventTape layer.** File map, end-to-end traces, wire protocol, and the recipe for adding an event type. Architecture Part 12 owns the *why*. |
 | [HitDetection.md](docs/HitDetection.md) | **The spatial layer, design and implementation map.** Hit volumes, position history, lag-compensated rewind, and the DETECT phase. Self-contained — no Architecture Part owns this one. |
+| [BossAI-HFSM.md](docs/BossAI-HFSM.md) | **Boss AI reasoning — conceptual, unbuilt.** Statechart model, combat reaction states, and what the first boss actually needs. A record of thinking, not a spec; read Part 7 before building. |
 | [Client-Architecture-Handoff.md](docs/Client-Architecture-Handoff.md) | Cold-start primer that preceded the client document. Largely superseded by it. |
 | [signalREADME.md](src/shared/utils/signal/signalREADME.md) | The Signal layer up close. |
 
