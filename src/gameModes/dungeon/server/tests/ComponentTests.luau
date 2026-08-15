@@ -7,36 +7,53 @@
 local ServerStorage = game:GetService("ServerStorage")
 local components = ServerStorage:WaitForChild("Shared"):WaitForChild("components")
 
-local Identity = require(components:WaitForChild("Identity"))
-local Stats = require(components:WaitForChild("Stats"))
-local Buffs = require(components:WaitForChild("Buffs"))
-local StateFlags = require(components:WaitForChild("StateFlags"))
-local Equipment = require(components:WaitForChild("Equipment"))
-local Inventory = require(components:WaitForChild("Inventory"))
-local Resources = require(components:WaitForChild("Resources"))
+local IdentityRegistry = require(ServerStorage:WaitForChild("Shared")
+    :WaitForChild("registries"):WaitForChild("IdentityRegistry"))
+
+local IdentityComponent = require(components:WaitForChild("IdentityComponent"))
+local StatsComponent = require(components:WaitForChild("StatsComponent"))
+local BuffsComponent = require(components:WaitForChild("BuffsComponent"))
+local StateFlagsComponent = require(components:WaitForChild("StateFlagsComponent"))
+local EquipmentComponent = require(components:WaitForChild("EquipmentComponent"))
+local InventoryComponent = require(components:WaitForChild("InventoryComponent"))
+local ResourcesComponent = require(components:WaitForChild("ResourcesComponent"))
 
 local TestRunner = require(script.Parent:WaitForChild("TestRunner"))
 
 return function()
     local t = TestRunner.new("Components")
 
-    -- Identity ------------------------------------------------------------
+    -- IdentityComponent ------------------------------------------------------------
 
-    t:case("Identity exposes type, id and owner", function(a)
-        local identity = Identity.new("PET", "PET_1", 12345)
-        a.equal(identity:getType(), "PET")
+    t:case("IdentityComponent exposes type, id and owner", function(a)
+        local identity = IdentityComponent.new(IdentityRegistry.PET, "PET_1", 12345)
+        a.equal(identity:getType(), IdentityRegistry.PET)
         a.equal(identity:getId(), "PET_1")
         a.isTrue(identity:isOwnedBy(12345))
         a.isFalse(identity:isOwnedBy(999))
-        a.isFalse(Identity.new("ENEMY", "E_1"):isOwnedBy(12345), "unowned entities belong to nobody")
+        a.isFalse(IdentityComponent.new(IdentityRegistry.ENEMY, "E_1"):isOwnedBy(12345),
+            "unowned entities belong to nobody")
     end)
 
-    -- Stats ---------------------------------------------------------------
+    t:case("IdentityComponent rejects an entity type the registry does not declare", function(a)
+        -- The whole reason the registry exists. A typo used to produce an
+        -- entity of type "ENEMEY" that every later type check silently
+        -- disagreed with, forever, with nothing thrown.
+        a.throws(function() IdentityComponent.new("ENEMEY", "E_1") end, "unknown entity type")
+        a.throws(function() IdentityComponent.new("", "E_1") end, "unknown entity type")
+        a.throws(function() IdentityComponent.new(IdentityRegistry.ENEMY, nil) end, "id required")
 
-    t:case("Stats bumps its version on every change", function(a)
+        a.isTrue(IdentityRegistry.isValidIdentity(IdentityRegistry.BOSS))
+        a.isFalse(IdentityRegistry.isValidIdentity("isValidIdentity"),
+            "a function on the registry is not an entity type")
+    end)
+
+    -- StatsComponent ---------------------------------------------------------------
+
+    t:case("StatsComponent bumps its version on every change", function(a)
         -- The version is what makes StatService's cache correct without
         -- anyone remembering to call invalidate().
-        local stats = Stats.new({ attack = 10 })
+        local stats = StatsComponent.new({ attack = 10 })
         a.equal(stats.version, 0)
         a.equal(stats:getBase("attack"), 10)
         a.equal(stats:getBase("nonexistent"), 0, "an unknown stat reads as 0")
@@ -49,34 +66,34 @@ return function()
         a.equal(stats.version, 2)
     end)
 
-    t:case("Stats rejects non-numeric values", function(a)
-        local stats = Stats.new()
+    t:case("StatsComponent rejects non-numeric values", function(a)
+        local stats = StatsComponent.new()
         a.throws(function() stats:setBase("attack", "lots") end, "must be numbers")
     end)
 
-    -- Resources -----------------------------------------------------------
+    -- ResourcesComponent -----------------------------------------------------------
 
-    t:case("Resources reads an unknown id as zero", function(a)
-        local resources = Resources.new({ Gold = 50 })
+    t:case("ResourcesComponent reads an unknown id as zero", function(a)
+        local resources = ResourcesComponent.new({ Gold = 50 })
         a.equal(resources:get("Gold"), 50)
         a.equal(resources:get("RaidTokens"), 0, "an unknown resource reads as 0, it does not error")
         a.isTrue(resources:has("Gold"))
         a.isFalse(resources:has("RaidTokens"))
     end)
 
-    t:case("Resources holds HP like any other number", function(a)
+    t:case("ResourcesComponent holds HP like any other number", function(a)
         -- HP lives here, not in a separate Vitals component -- two homes for
         -- one number is how they drift apart.
-        local resources = Resources.new({ HP = 100, MaxHP = 100 })
+        local resources = ResourcesComponent.new({ HP = 100, MaxHP = 100 })
         resources:setRaw("HP", 60)
         a.equal(resources:get("HP"), 60)
         a.equal(resources.version, 1)
     end)
 
-    -- StateFlags ----------------------------------------------------------
+    -- StateFlagsComponent ----------------------------------------------------------
 
-    t:case("StateFlags sets and clears", function(a)
-        local flags = StateFlags.new()
+    t:case("StateFlagsComponent sets and clears", function(a)
+        local flags = StateFlagsComponent.new()
         a.isFalse(flags:has("FROZEN"))
 
         flags:set("FROZEN")
@@ -87,7 +104,7 @@ return function()
     end)
 
     t:case("a timed flag expires on read", function(a)
-        local flags = StateFlags.new()
+        local flags = StateFlagsComponent.new()
         flags:set("INVULNERABLE", 0.001)
         a.isTrue(flags:has("INVULNERABLE"), "still live immediately after being set")
 
@@ -99,7 +116,7 @@ return function()
     t:case("flags are independent and can co-occur", function(a)
         -- IMMOBILIZED and INVULNERABLE are distinct: one blocks acting, the
         -- other blocks damage, and both can be true at once.
-        local flags = StateFlags.new()
+        local flags = StateFlagsComponent.new()
         flags:set("IMMOBILIZED")
         flags:set("INVULNERABLE")
         a.isTrue(flags:has("IMMOBILIZED"))
@@ -107,15 +124,15 @@ return function()
         a.equal(#flags:active(), 2)
     end)
 
-    t:case("StateFlags rejects a non-positive duration", function(a)
-        local flags = StateFlags.new()
+    t:case("StateFlagsComponent rejects a non-positive duration", function(a)
+        local flags = StateFlagsComponent.new()
         a.throws(function() flags:set("FROZEN", 0) end, "must be positive")
     end)
 
-    -- Buffs ---------------------------------------------------------------
+    -- BuffsComponent ---------------------------------------------------------------
 
-    t:case("Buffs refuses duplicate ids", function(a)
-        local buffs = Buffs.new()
+    t:case("BuffsComponent refuses duplicate ids", function(a)
+        local buffs = BuffsComponent.new()
         a.isTrue(buffs:add({ id = "b1", type = "ATTACK_UP" }))
 
         local ok, reason = buffs:add({ id = "b1", type = "ATTACK_UP" })
@@ -123,8 +140,8 @@ return function()
         a.equal(reason, "DUPLICATE_ID")
     end)
 
-    t:case("Buffs sweeps expiries before returning", function(a)
-        local buffs = Buffs.new()
+    t:case("BuffsComponent sweeps expiries before returning", function(a)
+        local buffs = BuffsComponent.new()
         buffs:add({ id = "live", type = "ATTACK_UP" })
         buffs:add({ id = "dead", type = "SPEED_UP", expiresAt = os.clock() - 1 })
 
@@ -134,8 +151,8 @@ return function()
         a.isNil(buffs:get("dead"))
     end)
 
-    t:case("Buffs bumps its version on add and remove", function(a)
-        local buffs = Buffs.new()
+    t:case("BuffsComponent bumps its version on add and remove", function(a)
+        local buffs = BuffsComponent.new()
         buffs:add({ id = "b1", type = "ATTACK_UP" })
         a.equal(buffs.version, 1)
         a.isTrue(buffs:remove("b1"))
@@ -143,24 +160,24 @@ return function()
         a.isFalse(buffs:remove("b1"), "removing what is not there is not a mutation")
     end)
 
-    t:case("Buffs finds by type", function(a)
-        local buffs = Buffs.new()
+    t:case("BuffsComponent finds by type", function(a)
+        local buffs = BuffsComponent.new()
         buffs:add({ id = "b1", type = "PARRY_WINDOW" })
         a.notNil(buffs:findByType("PARRY_WINDOW"), "the parry window is a Buff, not a StateFlag")
         a.isNil(buffs:findByType("NOTHING"))
     end)
 
-    -- Equipment -----------------------------------------------------------
+    -- EquipmentComponent -----------------------------------------------------------
 
-    t:case("Equipment only accepts declared slots", function(a)
-        local equipment = Equipment.new({ "weapon", "armor" })
+    t:case("EquipmentComponent only accepts declared slots", function(a)
+        local equipment = EquipmentComponent.new({ "weapon", "armor" })
         a.isTrue(equipment:hasSlot("weapon"))
         a.isFalse(equipment:hasSlot("hat"))
         a.throws(function() equipment:attach("hat", {}) end, "undeclared slot")
     end)
 
     t:case("attach returns the displaced occupant", function(a)
-        local equipment = Equipment.new({ "weapon" })
+        local equipment = EquipmentComponent.new({ "weapon" })
         local sword = { id = "SWORD" }
         local axe = { id = "AXE" }
 
@@ -169,8 +186,8 @@ return function()
         a.equal(equipment:get("weapon"), axe)
     end)
 
-    t:case("Equipment bumps its version only on real changes", function(a)
-        local equipment = Equipment.new({ "weapon" })
+    t:case("EquipmentComponent bumps its version only on real changes", function(a)
+        local equipment = EquipmentComponent.new({ "weapon" })
         equipment:attach("weapon", { id = "SWORD" })
         a.equal(equipment.version, 1)
 
@@ -181,19 +198,19 @@ return function()
         a.equal(equipment.version, 2, "detaching an empty slot is not a change")
     end)
 
-    t:case("Equipment models a pet roster with numbered slots", function(a)
+    t:case("EquipmentComponent models a pet roster with numbered slots", function(a)
         -- PetRoster collapsed into this component: bounded slots with one
-        -- occupant each is exactly what Equipment already is.
-        local pets = Equipment.new({ "pet1", "pet2", "pet3" })
+        -- occupant each is exactly what EquipmentComponent already is.
+        local pets = EquipmentComponent.new({ "pet1", "pet2", "pet3" })
         a.equal(pets:firstEmptySlot(), "pet1")
         pets:attach("pet1", { id = "PET_A" })
         a.equal(pets:firstEmptySlot(), "pet2")
     end)
 
-    -- Inventory -----------------------------------------------------------
+    -- InventoryComponent -----------------------------------------------------------
 
-    t:case("Inventory enforces its capacity", function(a)
-        local inventory = Inventory.new({ maxSlots = 2 })
+    t:case("InventoryComponent enforces its capacity", function(a)
+        local inventory = InventoryComponent.new({ maxSlots = 2 })
         a.isTrue(inventory:add({ itemId = "A" }))
         a.isTrue(inventory:add({ itemId = "B" }))
 
@@ -203,8 +220,8 @@ return function()
         a.equal(inventory:count(), 2)
     end)
 
-    t:case("Inventory merges stackables instead of filling a slot", function(a)
-        local inventory = Inventory.new({ maxSlots = 2 })
+    t:case("InventoryComponent merges stackables instead of filling a slot", function(a)
+        local inventory = InventoryComponent.new({ maxSlots = 2 })
         inventory:add({ itemId = "POTION", quantity = 3, stackable = true })
         inventory:add({ itemId = "POTION", quantity = 2, stackable = true })
 
@@ -213,14 +230,14 @@ return function()
     end)
 
     t:case("a non-stackable item takes its own slot", function(a)
-        local inventory = Inventory.new({ maxSlots = 3 })
+        local inventory = InventoryComponent.new({ maxSlots = 3 })
         inventory:add({ itemId = "SWORD" })
         inventory:add({ itemId = "SWORD" })
         a.equal(inventory:count(), 2)
     end)
 
-    t:case("Inventory keeps slot indices stable across removal", function(a)
-        local inventory = Inventory.new({ maxSlots = 3 })
+    t:case("InventoryComponent keeps slot indices stable across removal", function(a)
+        local inventory = InventoryComponent.new({ maxSlots = 3 })
         inventory:add({ itemId = "A" })
         inventory:add({ itemId = "B" })
         inventory:add({ itemId = "C" })
@@ -232,8 +249,8 @@ return function()
         a.equal(inventory:nextEmptySlot(), 2, "the freed slot is the next one filled")
     end)
 
-    t:case("Inventory rejects over-removal", function(a)
-        local inventory = Inventory.new({ maxSlots = 2 })
+    t:case("InventoryComponent rejects over-removal", function(a)
+        local inventory = InventoryComponent.new({ maxSlots = 2 })
         inventory:add({ itemId = "POTION", quantity = 2, stackable = true })
 
         local ok, reason = inventory:removeSlot(1, 5)
@@ -248,8 +265,8 @@ return function()
     t:case("the same component works for any entity type", function(a)
         -- The whole point of composition: nothing here knows or cares
         -- whether its owner is a player, a pet, a boss or a loot container.
-        local playerBag = Inventory.new({ maxSlots = 30 })
-        local petBag = Inventory.new({ maxSlots = 5 })
+        local playerBag = InventoryComponent.new({ maxSlots = 30 })
+        local petBag = InventoryComponent.new({ maxSlots = 5 })
         a.isTrue(playerBag:add({ itemId = "A" }))
         a.isTrue(petBag:add({ itemId = "A" }))
     end)

@@ -1,4 +1,4 @@
--- src/shared/components/Equipment.luau
+-- src/shared/components/EquipmentComponent.luau
 --
 -- Named slots holding entities. See Architecture-Reference.md Part 7.
 --
@@ -8,15 +8,15 @@
 -- differs is the side effect (equipping a pet spawns an entity), and a side
 -- effect is a game rule that belongs to a Service.
 
-local Equipment = {}
-Equipment.__index = Equipment
+local EquipmentComponent = {}
+EquipmentComponent.__index = EquipmentComponent
 
-function Equipment.new(slotNames)
-    assert(type(slotNames) == "table" and #slotNames > 0, "[Equipment] declare at least one slot")
+function EquipmentComponent.new(slotNames)
+    assert(type(slotNames) == "table" and #slotNames > 0, "[EquipmentComponent] declare at least one slot")
 
     local slots, allowed = {}, {}
     for _, name in ipairs(slotNames) do
-        assert(type(name) == "string", "[Equipment] slot names must be strings")
+        assert(type(name) == "string", "[EquipmentComponent] slot names must be strings")
         slots[name] = nil
         allowed[name] = true
     end
@@ -26,29 +26,29 @@ function Equipment.new(slotNames)
         _allowed = allowed,
         _order = table.clone(slotNames),
         version = 0,
-    }, Equipment)
+    }, EquipmentComponent)
 end
 
-function Equipment:hasSlot(slotName)
+function EquipmentComponent:hasSlot(slotName)
     return self._allowed[slotName] == true
 end
 
-function Equipment:get(slotName)
-    assert(self:hasSlot(slotName), "[Equipment] undeclared slot: " .. tostring(slotName))
+function EquipmentComponent:get(slotName)
+    assert(self:hasSlot(slotName), "[EquipmentComponent] undeclared slot: " .. tostring(slotName))
     return self._slots[slotName]
 end
 
 -- Returns the previous occupant so a Service can decide what to do with it.
-function Equipment:attach(slotName, item)
-    assert(self:hasSlot(slotName), "[Equipment] undeclared slot: " .. tostring(slotName))
+function EquipmentComponent:attach(slotName, item)
+    assert(self:hasSlot(slotName), "[EquipmentComponent] undeclared slot: " .. tostring(slotName))
     local previous = self._slots[slotName]
     self._slots[slotName] = item
     self.version += 1
     return previous
 end
 
-function Equipment:detach(slotName)
-    assert(self:hasSlot(slotName), "[Equipment] undeclared slot: " .. tostring(slotName))
+function EquipmentComponent:detach(slotName)
+    assert(self:hasSlot(slotName), "[EquipmentComponent] undeclared slot: " .. tostring(slotName))
     local previous = self._slots[slotName]
     if previous == nil then
         return nil
@@ -58,7 +58,7 @@ function Equipment:detach(slotName)
     return previous
 end
 
-function Equipment:firstEmptySlot()
+function EquipmentComponent:firstEmptySlot()
     for _, name in ipairs(self._order) do
         if self._slots[name] == nil then
             return name
@@ -67,7 +67,7 @@ function Equipment:firstEmptySlot()
     return nil
 end
 
-function Equipment:getAll()
+function EquipmentComponent:getAll()
     local out = {}
     for _, name in ipairs(self._order) do
         if self._slots[name] ~= nil then
@@ -77,4 +77,4 @@ function Equipment:getAll()
     return out
 end
 
-return Equipment
+return EquipmentComponent

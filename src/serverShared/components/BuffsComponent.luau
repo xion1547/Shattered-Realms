@@ -1,4 +1,4 @@
--- src/shared/components/Buffs.luau
+-- src/shared/components/BuffsComponent.luau
 --
 -- Active buffs on an entity. See Architecture-Reference.md Part 7.
 --
@@ -6,22 +6,22 @@
 -- before getAll() returns. Stack/replace/refresh/ignore resolution is a game
 -- rule and belongs to BuffService.
 
-local Buffs = {}
-Buffs.__index = Buffs
+local BuffsComponent = {}
+BuffsComponent.__index = BuffsComponent
 
-function Buffs.new()
+function BuffsComponent.new()
     return setmetatable({
         _buffs = {},    -- id -> Buff
         version = 0,
-    }, Buffs)
+    }, BuffsComponent)
 end
 
 local function isExpired(buff, now)
     return buff.expiresAt ~= nil and now >= buff.expiresAt
 end
 
-function Buffs:add(buff)
-    assert(type(buff) == "table" and type(buff.id) == "string", "[Buffs] buff needs a string id")
+function BuffsComponent:add(buff)
+    assert(type(buff) == "table" and type(buff.id) == "string", "[BuffsComponent] buff needs a string id")
     if self._buffs[buff.id] then
         return false, "DUPLICATE_ID"
     end
@@ -30,7 +30,7 @@ function Buffs:add(buff)
     return true
 end
 
-function Buffs:remove(buffId)
+function BuffsComponent:remove(buffId)
     if not self._buffs[buffId] then
         return false
     end
@@ -39,7 +39,7 @@ function Buffs:remove(buffId)
     return true
 end
 
-function Buffs:get(buffId)
+function BuffsComponent:get(buffId)
     local buff = self._buffs[buffId]
     if buff and isExpired(buff, os.clock()) then
         self:remove(buffId)
@@ -49,7 +49,7 @@ function Buffs:get(buffId)
 end
 
 -- Sweeps expiries before returning, so no caller ever sees a stale buff.
-function Buffs:getAll()
+function BuffsComponent:getAll()
     local now = os.clock()
     local out = {}
     for id, buff in pairs(self._buffs) do
@@ -63,7 +63,7 @@ function Buffs:getAll()
     return out
 end
 
-function Buffs:findByType(buffType)
+function BuffsComponent:findByType(buffType)
     for _, buff in ipairs(self:getAll()) do
         if buff.type == buffType then
             return buff
@@ -72,4 +72,4 @@ function Buffs:findByType(buffType)
     return nil
 end
 
-return Buffs
+return BuffsComponent

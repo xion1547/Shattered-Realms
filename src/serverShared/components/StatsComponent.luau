@@ -1,4 +1,4 @@
--- src/shared/components/Stats.luau
+-- src/shared/components/StatsComponent.luau
 --
 -- Base stats plus a version counter. See Architecture-Reference.md Part 7.
 --
@@ -7,32 +7,32 @@
 -- entry recorded against an older version is stale by definition. A missed
 -- invalidate is impossible because there is no invalidate.
 
-local Stats = {}
-Stats.__index = Stats
+local StatsComponent = {}
+StatsComponent.__index = StatsComponent
 
-function Stats.new(base)
+function StatsComponent.new(base)
     return setmetatable({
         _base = base and table.clone(base) or {},
         version = 0,
-    }, Stats)
+    }, StatsComponent)
 end
 
-function Stats:getBase(statName)
+function StatsComponent:getBase(statName)
     return self._base[statName] or 0
 end
 
-function Stats:setBase(statName, value)
-    assert(type(value) == "number", "[Stats] stat values must be numbers")
+function StatsComponent:setBase(statName, value)
+    assert(type(value) == "number", "[StatsComponent] stat values must be numbers")
     self._base[statName] = value
     self.version += 1
 end
 
-function Stats:addBase(statName, delta)
+function StatsComponent:addBase(statName, delta)
     self:setBase(statName, self:getBase(statName) + delta)
 end
 
-function Stats:all()
+function StatsComponent:all()
     return table.clone(self._base)
 end
 
-return Stats
+return StatsComponent

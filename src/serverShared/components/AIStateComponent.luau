@@ -1,4 +1,4 @@
--- src/shared/components/AIState.luau
+-- src/shared/components/AIStateComponent.luau
 --
 -- FSM state for anything AIService drives. See Architecture-Reference.md
 -- Parts 7 and 10.
@@ -8,10 +8,10 @@
 -- `profile` from the Content Layer. That is why there is no BossAIService
 -- and no PetAIService.
 
-local AIState = {}
-AIState.__index = AIState
+local AIStateComponent = {}
+AIStateComponent.__index = AIStateComponent
 
-function AIState.new(profile)
+function AIStateComponent.new(profile)
     return setmetatable({
         _profile = profile,          -- Content Layer key selecting a decision module
         _state = "IDLE",             -- IDLE | TELEGRAPHING | ATTACKING | STAGGERED | ...
@@ -19,39 +19,39 @@ function AIState.new(profile)
         _queuedMove = nil,
         _lastDecisionAt = 0,
         _nextDecisionAt = 0,
-    }, AIState)
+    }, AIStateComponent)
 end
 
-function AIState:getProfile()
+function AIStateComponent:getProfile()
     return self._profile
 end
 
-function AIState:getState()
+function AIStateComponent:getState()
     return self._state
 end
 
-function AIState:setState(state)
-    assert(type(state) == "string", "[AIState] state must be a string")
+function AIStateComponent:setState(state)
+    assert(type(state) == "string", "[AIStateComponent] state must be a string")
     self._state = state
 end
 
-function AIState:getAggroTargetId()
+function AIStateComponent:getAggroTargetId()
     return self._aggroTargetId
 end
 
-function AIState:setAggroTargetId(targetId)
+function AIStateComponent:setAggroTargetId(targetId)
     self._aggroTargetId = targetId
 end
 
-function AIState:getQueuedMove()
+function AIStateComponent:getQueuedMove()
     return self._queuedMove
 end
 
-function AIState:queueMove(move)
+function AIStateComponent:queueMove(move)
     self._queuedMove = move
 end
 
-function AIState:consumeQueuedMove()
+function AIStateComponent:consumeQueuedMove()
     local move = self._queuedMove
     self._queuedMove = nil
     return move
@@ -59,13 +59,13 @@ end
 
 -- Per-profile pacing lives here, not in the Scheduler: the Scheduler ticks
 -- AIService at one rate and AIService skips whatever is not due.
-function AIState:isDue(now)
+function AIStateComponent:isDue(now)
     return now >= self._nextDecisionAt
 end
 
-function AIState:markDecided(now, interval)
+function AIStateComponent:markDecided(now, interval)
     self._lastDecisionAt = now
     self._nextDecisionAt = now + (interval or 0)
 end
 
-return AIState
+return AIStateComponent

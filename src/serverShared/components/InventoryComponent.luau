@@ -1,40 +1,40 @@
--- src/shared/components/Inventory.luau
+-- src/shared/components/InventoryComponent.luau
 --
 -- Ordered item slots with a capacity. See Architecture-Reference.md Part 7.
 --
 -- Invariants owned here: capacity, stable slot indices, stack merging. These
--- are Inventory rules and hold whether the owner is a player, a pet, a boss
+-- are InventoryComponent rules and hold whether the owner is a player, a pet, a boss
 -- or a loot container. "Can this player pick this up right now, given zone
 -- and range" is a game rule and belongs to InventoryService.
 
-local Inventory = {}
-Inventory.__index = Inventory
+local InventoryComponent = {}
+InventoryComponent.__index = InventoryComponent
 
-function Inventory.new(config)
+function InventoryComponent.new(config)
     local maxSlots = config and config.maxSlots or 30
-    assert(type(maxSlots) == "number" and maxSlots > 0, "[Inventory] maxSlots must be positive")
+    assert(type(maxSlots) == "number" and maxSlots > 0, "[InventoryComponent] maxSlots must be positive")
 
     return setmetatable({
         _slots = {},        -- index -> { itemId, quantity, item }
         _maxSlots = maxSlots,
         _used = 0,
         version = 0,
-    }, Inventory)
+    }, InventoryComponent)
 end
 
-function Inventory:isFull()
+function InventoryComponent:isFull()
     return self._used >= self._maxSlots
 end
 
-function Inventory:getSlot(index)
+function InventoryComponent:getSlot(index)
     return self._slots[index]
 end
 
-function Inventory:count()
+function InventoryComponent:count()
     return self._used
 end
 
-function Inventory:findStackable(itemId)
+function InventoryComponent:findStackable(itemId)
     for index, slot in pairs(self._slots) do
         if slot.itemId == itemId and slot.stackable then
             return index
@@ -43,7 +43,7 @@ function Inventory:findStackable(itemId)
     return nil
 end
 
-function Inventory:nextEmptySlot()
+function InventoryComponent:nextEmptySlot()
     for index = 1, self._maxSlots do
         if self._slots[index] == nil then
             return index
@@ -54,9 +54,9 @@ end
 
 -- Returns (true) or (false, reason). A refusal here is a component-level
 -- invariant, never a game rule.
-function Inventory:add(entry)
+function InventoryComponent:add(entry)
     assert(type(entry) == "table" and type(entry.itemId) == "string",
-        "[Inventory] entry needs a string itemId")
+        "[InventoryComponent] entry needs a string itemId")
 
     local quantity = entry.quantity or 1
 
@@ -89,7 +89,7 @@ function Inventory:add(entry)
     return true
 end
 
-function Inventory:removeSlot(index, quantity)
+function InventoryComponent:removeSlot(index, quantity)
     local slot = self._slots[index]
     if not slot then
         return false, "EMPTY_SLOT"
@@ -109,7 +109,7 @@ function Inventory:removeSlot(index, quantity)
     return true
 end
 
-function Inventory:getAll()
+function InventoryComponent:getAll()
     local out = {}
     for index, slot in pairs(self._slots) do
         out[index] = slot
@@ -117,4 +117,4 @@ function Inventory:getAll()
     return out
 end
 
-return Inventory
+return InventoryComponent
