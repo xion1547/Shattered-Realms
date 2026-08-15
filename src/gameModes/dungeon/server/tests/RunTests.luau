@@ -21,16 +21,36 @@ local HALT_ON_FAILURE = false
 
 local RunTests = {}
 
+-- A name may be a path. Suites for a subsystem live in their own folder
+-- rather than being crammed into one file per layer -- the targeting suites
+-- cover four modules and belong split by module, not by directory.
 local SUITES = {
     "SignalTests",
     "SignalServiceTests",
     "ComponentTests",
     "SpatialTests",
+    "targeting/OverlapTests",
+    "targeting/HitVolumeTests",
+    "targeting/TargetResolutionTests",
     "EventTests",
     "EventTapeTests",
     "EventRouterTests",
     "BootTests",
 }
+
+-- Walks a slash-separated path from the tests folder. Returns nil rather
+-- than erroring so a missing suite is reported as one failure among many,
+-- not as the thing that stops the run.
+local function resolveSuite(name: string)
+    local node: Instance? = script.Parent
+    for segment in string.gmatch(name, "[^/]+") do
+        if not node then
+            return nil
+        end
+        node = node:FindFirstChild(segment)
+    end
+    return node
+end
 
 function RunTests.run()
     if not ENABLED then
@@ -46,7 +66,7 @@ function RunTests.run()
     print("========================================")
 
     for _, suiteName in ipairs(SUITES) do
-        local moduleScript = script.Parent:FindFirstChild(suiteName)
+        local moduleScript = resolveSuite(suiteName)
         if not moduleScript then
             warn(string.format("  [MISSING] %s -- suite module not found", suiteName))
             totalFailed += 1
