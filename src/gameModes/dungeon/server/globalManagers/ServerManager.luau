@@ -20,6 +20,17 @@ local signalFolder = ReplicatedStorage:WaitForChild("utils"):WaitForChild("signa
 local eventFolder = ReplicatedStorage:WaitForChild("eventTape"):WaitForChild("event")
 
 local PlayerEntity = require(serverRoot:WaitForChild("entities"):WaitForChild("PlayerEntity"))
+-- Required directly rather than read out of self.services: require is cached,
+-- so both spellings are the same table, and this one says which service it
+-- means at the top of the file instead of by string at the call site.
+local EntityService = require(serverRoot:WaitForChild("services"):WaitForChild("authority")
+    :WaitForChild("EntityService"))
+local SpatialService = require(serverRoot:WaitForChild("services"):WaitForChild("authority")
+    :WaitForChild("SpatialService"))
+
+-- The radius of the sphere an attack volume is tested against for a player.
+-- Roughly a character's width. Tuned separately from the visible body.
+local PLAYER_HURTBOX_RADIUS = 2.5
 local ServiceLoader = require(bootFolder:WaitForChild("ServiceLoader"))
 local PlaceManifest = require(bootFolder:WaitForChild("PlaceManifest"))
 local BootValidation = require(bootFolder:WaitForChild("BootValidation"))
@@ -44,7 +55,9 @@ ServerManager.__index = ServerManager
 
 function ServerManager.new()
     return setmetatable({
-        players = {},
+        -- No player map here. EntityService holds every entity in this place,
+        -- and a second table keyed the same way was two doors into one truth --
+        -- the pair drifts the first time anything registers through only one.
 
         -- Fire-capable Signal references for the facts this manager owns.
         -- Private to this object on purpose (Part 11.5).
@@ -129,27 +142,70 @@ end
 
 function ServerManager:AddPlayer(player)
     local entity = PlayerEntity.new(player)
-    self.players[entity:getId()] = entity
+    EntityService:register(entity)
+    self:_bindCharacter(player, entity)
 
     -- Announced last, after the entity exists: a Fact is only fired once the
     -- thing it describes has actually finished happening.
     self.signals.OnJoined:Fire(entity)
 end
 
+-- A player's ENTITY exists from the moment they join. Their BODY does not,
+-- and it comes and goes with every respawn -- so binding the two is an event
+-- handler, not a line in AddPlayer. This is the asymmetry that made a
+-- createEntity impossible to write (EntityService's header).
+--
+-- No matching detach on death, deliberately. SpatialService:tick self-heals
+-- when an anchor leaves the workspace, which is exactly what a destroyed
+-- character is, and attach clears the old history so a respawned player is
+-- never rewindable into a position their previous body occupied.
+function ServerManager:_bindCharacter(player, entity)
+    local function attach(character)
+        local root = character:WaitForChild("HumanoidRootPart", 10)
+        if root then
+            SpatialService:attach(entity, root, PLAYER_HURTBOX_RADIUS)
+        else
+            warn(string.format(
+                "[ServerManager] %s spawned without a HumanoidRootPart within 10s; "
+                    .. "they cannot be hit and cannot attack until they respawn",
+                player.Name))
+        end
+    end
+
+    player.CharacterAdded:Connect(attach)
+
+    -- Already spawned -- this manager can boot after players are in. Spawned
+    -- into its own thread because attach yields on WaitForChild and AddPlayer
+    -- is called from a loop that must not block on one player's character.
+    if player.Character then
+        task.spawn(attach, player.Character)
+    end
+end
+
 function ServerManager:RemovePlayer(player)
-    local entity = self.players[player.UserId]
+    -- player.UserId IS the entity id -- PlayerEntity builds its identity from
+    -- it. EntityService deliberately has no forPlayer, so the translation
+    -- happens here, at the boundary where a Roblox Player enters the system.
+    local entity = EntityService:get(player.UserId)
     if not entity then
         return
     end
 
-    self.players[player.UserId] = nil
-    entity:destroy()
+    -- One call, not three. This used to do entity:destroy() by hand and skip
+    -- the spatial detach entirely, which left every disconnected player in
+    -- SpatialService's attached set as a permanently valid hit-detection
+    -- target -- silently, because nothing reads that set except hit queries.
+    EntityService:deleteEntity(entity)
+
     self.signals.OnLeft:Fire(entity)
 end
 
-function ServerManager:GetAllPlayers()
-    return self.players
-end
+-- No GetAllPlayers. It had no callers, and reinstating it here would mean
+-- either filtering EntityService's map by entity type -- which is exactly the
+-- distinction that service refuses to make -- or keeping a parallel list,
+-- which is what this change removed. If something needs the set of live player
+-- entities, it walks game.Players:GetPlayers() and maps each through
+-- EntityService:get(p.UserId); Roblox already keeps that list.
 
 function ServerManager:GetService(serviceName)
     return self.services[serviceName]

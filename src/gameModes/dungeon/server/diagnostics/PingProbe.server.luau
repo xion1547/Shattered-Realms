@@ -27,13 +27,24 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ServerStorage = game:GetService("ServerStorage")
+
+-- OFF BY DEFAULT, because it is the loudest thing in the output and its
+-- question cannot be answered where it is cheapest to run.
+--
+-- NOT DELETED, because that question is still open: on localhost
+-- GetNetworkPing() reads 0.0000, the ratio is 0, and the verdict comes back
+-- INCONCLUSIVE -- correctly. Turn this on inside a Team Test or a published
+-- place, where there is real latency to characterise, and read the RESULT
+-- block. Until then PING_TO_ROUND_TRIP stays at 2, the over-rewinding guess.
+local ENABLED = false
+if not ENABLED then
+    return
+end
 
 local serverRoot = game.ServerScriptService:WaitForChild("Server")
-local SpatialService = require(serverRoot:WaitForChild("services"):WaitForChild("authority")
-    :WaitForChild("SpatialService"))
-local Spatial = require(ServerStorage:WaitForChild("Shared"):WaitForChild("components")
-    :WaitForChild("Spatial"))
+local authority = serverRoot:WaitForChild("services"):WaitForChild("authority")
+local SpatialService = require(authority:WaitForChild("SpatialService"))
+local EntityService = require(authority:WaitForChild("EntityService"))
 
 local SAMPLES_WANTED = 20
 local SAMPLE_INTERVAL = 0.75
@@ -169,37 +180,16 @@ remote.OnServerEvent:Connect(function(player, sentAt)
     end
 end)
 
--- The spatial half. A stub entity rather than a real PlayerEntity: this is
--- testing Spatial and SpatialService, not the entity wiring, and building a
--- second PlayerEntity alongside ServerManager's would be a confusing lie.
-local function attachCharacter(player: Player, character: Model)
-    local root = character:WaitForChild("HumanoidRootPart", 10)
-    if not root then
-        warn(string.format("[PingProbe] %s has no HumanoidRootPart", player.Name))
-        return
-    end
-
-    local probe = probes[player]
-    if not probe then
-        return
-    end
-
-    probe.entity = { spatial = Spatial.new() }
-    SpatialService:attach(probe.entity, root, 2.5)
-
-    print(string.format("[PingProbe] attached %s  (attached entities: %d)",
-        player.Name, SpatialService:attachedCount()))
-end
-
+-- THE SPATIAL HALF OBSERVES THE REAL ENTITY AND ATTACHES NOTHING.
+--
+-- It used to attach a stub `{ spatial = ... }` of its own, written back when
+-- nothing else attached a player. That stub became a bug the moment hit
+-- detection went live: it sat at the player's exact position with no identity
+-- component, so a swing returned it as a hit and every consumer that reads
+-- entity.identity crashed on it. A diagnostic has no business putting a
+-- phantom target inside the player it is measuring.
 Players.PlayerAdded:Connect(function(player)
     probes[player] = { rtts = {}, pings = {}, done = false }
-
-    player.CharacterAdded:Connect(function(character)
-        attachCharacter(player, character)
-    end)
-    if player.Character then
-        attachCharacter(player, player.Character)
-    end
 
     task.spawn(function()
         while player.Parent and probes[player] and not probes[player].done do
@@ -210,10 +200,8 @@ Players.PlayerAdded:Connect(function(player)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-    local probe = probes[player]
-    if probe and probe.entity then
-        SpatialService:detach(probe.entity)
-    end
+    -- No detach. This probe owns no attached entity any more; the real one is
+    -- torn down by EntityService:deleteEntity from ServerManager.
     probes[player] = nil
 end)
 
@@ -230,9 +218,12 @@ task.spawn(function()
     while true do
         task.wait(SPATIAL_LOG_INTERVAL)
 
-        for player, probe in pairs(probes) do
-            local entity = probe.entity
-            if entity and SpatialService:isAttached(entity) then
+        for player in pairs(probes) do
+            -- Resolved fresh each pass rather than cached at join: the entity
+            -- exists from the moment they connect, but its BODY is attached
+            -- later on CharacterAdded and re-attached on every respawn.
+            local entity = EntityService:get(player.UserId)
+            if entity and entity.spatial and SpatialService:isAttached(entity) then
                 local now = workspace:GetServerTimeNow()
                 local live = entity.spatial:getCFrame()
                 local past = SpatialService:poseAt(entity, now - REWIND_DEMO_WINDOW)

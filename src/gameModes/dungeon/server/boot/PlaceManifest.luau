@@ -32,6 +32,7 @@ return {
         -- persists (nothing here survives a teleport) but because every
         -- place has entities standing somewhere.
         "SpatialService",
+        "EntityService"
     },
 
     infra = {
