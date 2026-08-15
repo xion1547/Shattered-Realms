@@ -15,7 +15,10 @@
 local ServerStorage = game:GetService("ServerStorage")
 local components = ServerStorage:WaitForChild("Shared"):WaitForChild("components")
 
-local Spatial = require(components:WaitForChild("Spatial"))
+local SpatialComponent = require(components:WaitForChild("SpatialComponent"))
+local IdentityComponent = require(components:WaitForChild("IdentityComponent"))
+local IdentityRegistry = require(ServerStorage:WaitForChild("Shared")
+    :WaitForChild("registries"):WaitForChild("IdentityRegistry"))
 
 local serverRoot = game.ServerScriptService:WaitForChild("Server")
 local SpatialService = require(serverRoot:WaitForChild("services"):WaitForChild("authority")
@@ -38,8 +41,17 @@ local function makeAnchor(position)
     return part
 end
 
+-- Carries an identity as well as a spatial component, because attach requires
+-- one: the attached set is the hit-detection target set, and every target has
+-- to be attributable. The bare `{ spatial = ... }` this used to return is
+-- exactly the shape that assert exists to reject.
+local nextTestId = 0
 local function entityWith(historyLength)
-    return { spatial = Spatial.new(historyLength) }
+    nextTestId += 1
+    return {
+        identity = IdentityComponent.new(IdentityRegistry.ENEMY, "SPATIAL_TEST_" .. nextTestId),
+        spatial = SpatialComponent.new(historyLength),
+    }
 end
 
 return function()
@@ -47,8 +59,8 @@ return function()
 
     -- Component: anchoring ------------------------------------------------
 
-    t:case("a new Spatial is unanchored and answers nothing", function(a)
-        local spatial = Spatial.new()
+    t:case("a new SpatialComponent is unanchored and answers nothing", function(a)
+        local spatial = SpatialComponent.new()
         a.isFalse(spatial:isAnchored())
         a.isNil(spatial:getCFrame(), "an unanchored component has no position")
         a.isNil(spatial:poseAt(0), "an unanchored component has no history")
@@ -59,7 +71,7 @@ return function()
         -- This is what a respawn and a disconnect both look like from here,
         -- and it is what SpatialService's self-healing detach keys off.
         local part = makeAnchor()
-        local spatial = Spatial.new()
+        local spatial = SpatialComponent.new()
         spatial:setAnchor(part, 2)
         a.isTrue(spatial:isAnchored())
 
@@ -70,7 +82,7 @@ return function()
     end)
 
     t:case("setAnchor rejects a non-part and a non-positive radius", function(a)
-        local spatial = Spatial.new()
+        local spatial = SpatialComponent.new()
         a.throws(function() spatial:setAnchor(nil, 2) end, "must be a BasePart")
         a.throws(function() spatial:setAnchor(Instance.new("Folder"), 2) end, "must be a BasePart")
 
@@ -85,7 +97,7 @@ return function()
         -- respawned character that inherited the old buffer would be
         -- rewindable to a position it never occupied.
         local first, second = makeAnchor(), makeAnchor()
-        local spatial = Spatial.new()
+        local spatial = SpatialComponent.new()
 
         spatial:setAnchor(first, 2)
         spatial:record(1, CFrame.new(50, 0, 0))
@@ -102,7 +114,7 @@ return function()
     -- Component: the ring buffer ------------------------------------------
 
     t:case("poseAt returns an exact sample at its exact timestamp", function(a)
-        local spatial = Spatial.new(4)
+        local spatial = SpatialComponent.new(4)
         spatial:record(10, CFrame.new(0, 0, 0))
         spatial:record(11, CFrame.new(10, 0, 0))
 
@@ -111,7 +123,7 @@ return function()
     end)
 
     t:case("poseAt interpolates between the bracketing samples", function(a)
-        local spatial = Spatial.new(4)
+        local spatial = SpatialComponent.new(4)
         spatial:record(10, CFrame.new(0, 0, 0))
         spatial:record(11, CFrame.new(10, 0, 0))
 
@@ -121,7 +133,7 @@ return function()
     end)
 
     t:case("poseAt clamps at both ends rather than returning nil", function(a)
-        local spatial = Spatial.new(4)
+        local spatial = SpatialComponent.new(4)
         spatial:record(10, CFrame.new(0, 0, 0))
         spatial:record(11, CFrame.new(10, 0, 0))
 
@@ -130,7 +142,7 @@ return function()
     end)
 
     t:case("a single sample answers every query", function(a)
-        local spatial = Spatial.new(4)
+        local spatial = SpatialComponent.new(4)
         spatial:record(10, CFrame.new(7, 0, 0))
         a.near(spatial:poseAt(0).Position.X, 7)
         a.near(spatial:poseAt(10).Position.X, 7)
@@ -138,7 +150,7 @@ return function()
     end)
 
     t:case("the buffer wraps and evicts oldest first", function(a)
-        local spatial = Spatial.new(3)
+        local spatial = SpatialComponent.new(3)
         for i = 1, 4 do
             spatial:record(i, CFrame.new(i, 0, 0))
         end
@@ -154,7 +166,7 @@ return function()
         -- four samples written, logical samples 2,3,4 sit at physical slots
         -- 2,3,1 -- so interpolating between logical 3 and 4 reads across the
         -- end of the array and back to the front.
-        local spatial = Spatial.new(3)
+        local spatial = SpatialComponent.new(3)
         for i = 1, 4 do
             spatial:record(i, CFrame.new(i * 10, 0, 0))
         end
@@ -167,7 +179,7 @@ return function()
         -- Many samples, many wraps, and a query near the middle. A search
         -- that was off by one physical slot would still return a plausible
         -- position, which is why the expected value here is exact.
-        local spatial = Spatial.new(17)
+        local spatial = SpatialComponent.new(17)
         for i = 1, 100 do
             spatial:record(i * 0.1, CFrame.new(i, 0, 0))
         end
@@ -184,7 +196,7 @@ return function()
         -- The binary search depends on ordering. This is a guard rather
         -- than an assert because it runs inside a pcall'd Scheduler tick,
         -- where an assert would warn once per frame forever.
-        local spatial = Spatial.new(4)
+        local spatial = SpatialComponent.new(4)
         spatial:record(10, CFrame.new(0, 0, 0))
         spatial:record(10, CFrame.new(99, 0, 0))
         spatial:record(9, CFrame.new(99, 0, 0))
@@ -194,7 +206,7 @@ return function()
     end)
 
     t:case("span reports how far back the buffer actually reaches", function(a)
-        local spatial = Spatial.new(4)
+        local spatial = SpatialComponent.new(4)
         spatial:record(100, CFrame.new())
         spatial:record(101, CFrame.new())
 
@@ -364,16 +376,66 @@ return function()
     end)
 
     t:case("the buffer is long enough to span the rewind ceiling", function(a)
-        -- The arithmetic tying SAMPLE_HZ, MAX_REWIND and the default
-        -- component buffer together. If someone retunes one of the three,
-        -- this is what says so.
+        -- The arithmetic tying SAMPLE_HZ, HISTORY_SECONDS, MAX_REWIND and the
+        -- default component buffer together. If someone retunes one of the
+        -- four, this is what says so.
+        --
+        -- Every failure in here is otherwise SILENT. A buffer too short to
+        -- span the ceiling does not error -- poseAt clamps to its oldest
+        -- sample and hands back a real position from the wrong moment, so
+        -- hits land slightly wrong forever and nothing looks broken.
         local constants = SpatialService:constants()
-        local needed = constants.maxRewind * constants.sampleHz
 
+        -- What we STORE must cover what we REACH. SpatialService:boot asserts
+        -- this too; it is here as well because boot does not run under test.
+        a.isTrue(constants.historySeconds >= constants.maxRewind, string.format(
+            "history stores %.2fs but rewind reaches %.2fs",
+            constants.historySeconds, constants.maxRewind))
+
+        local needed = constants.historySeconds * constants.sampleHz
         a.isTrue(constants.historyLength > needed, string.format(
             "history of %d must exceed %.1f samples", constants.historyLength, needed))
-        a.isTrue(Spatial.new():historyLength() >= constants.historyLength,
+
+        a.isTrue(SpatialComponent.new():historyLength() >= constants.historyLength,
             "the component's default buffer must satisfy the service's ceiling")
+    end)
+
+    t:case("verifySampleRate measures the buffer that exists, not the assumed rate", function(a)
+        -- SAMPLE_HZ controls nothing -- tick records whenever it is called,
+        -- and the real rate is the Scheduler's row, a second copy of the
+        -- number in another file. If the two diverge, both asserts in
+        -- SpatialService still pass (they compare sample COUNTS, and this
+        -- failure is about DURATION) and every rewound query silently clamps
+        -- to the oldest sample. This is the only thing that would notice.
+        local constants = SpatialService:constants()
+
+        local partial = SpatialComponent.new(4)
+        partial:record(100, CFrame.new())
+        local ok, observed = SpatialService:verifySampleRate(partial, 100)
+        a.isTrue(ok, "a partly filled buffer is not evidence of a bad rate")
+        a.isNil(observed, "and offers no measurement to act on")
+
+        -- Full, but sampled 1ms apart: four samples span 0.003s, nowhere near
+        -- the ceiling. This is the shape of a Scheduler row set far higher
+        -- than SAMPLE_HZ believes it to be.
+        local fast = SpatialComponent.new(4)
+        for i = 0, 3 do
+            fast:record(100 + i * 0.001, CFrame.new())
+        end
+        ok, observed = SpatialService:verifySampleRate(fast, 100.003)
+        a.isFalse(ok, "a buffer spanning 3ms cannot answer a half-second rewind")
+        a.near(observed, 0.003, 0.0001)
+
+        -- Sampled a second apart. Slower than assumed is coarse, never short,
+        -- so this direction must never warn.
+        local slow = SpatialComponent.new(4)
+        for i = 1, 4 do
+            slow:record(200 + i, CFrame.new())
+        end
+        ok, observed = SpatialService:verifySampleRate(slow, 204)
+        a.isTrue(ok, "sampling slower than assumed is safe")
+        a.near(observed, 3, 0.0001)
+        a.isTrue(observed > constants.maxRewind, "and reaches further back than the ceiling")
     end)
 
     return t:run()

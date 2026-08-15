@@ -1,4 +1,4 @@
--- src/serverShared/components/Spatial.luau
+-- src/serverShared/components/SpatialComponent.luau
 --
 -- Where an entity is, and where it recently was. See HitDetection.md.
 --
@@ -19,15 +19,23 @@
 -- world, forever, and a buffer that reallocated would be the one piece of
 -- the combat path that produced garbage on a fixed schedule.
 
-local Spatial = {}
-Spatial.__index = Spatial
+local SpatialComponent = {}
+SpatialComponent.__index = SpatialComponent
 
 -- Two parallel arrays rather than an array of { t = , cf = } tables: the
 -- point of preallocating is to never allocate again, and a table per sample
 -- would defeat it.
-function Spatial.new(historyLength: number?)
-    local length = historyLength or 17
-    assert(length > 1, "[Spatial] history needs at least two slots to interpolate")
+-- THE DEFAULT IS A SECOND COPY OF SpatialService's HISTORY_LENGTH, which is
+-- a duplicated constant on purpose rather than by accident: this component is
+-- serverShared and the service is place-specific, so it cannot require the
+-- number from the one place that chooses it. Two guards cover the drift --
+-- SpatialService:attach asserts at runtime, and SpatialTests asserts at test
+-- time -- so a mismatch fails loudly instead of silently shortening rewind.
+-- If it ever needs to be one number, the fix is entity construction passing
+-- SpatialService:constants().historyLength in, not this file reaching upward.
+function SpatialComponent.new(historyLength: number?)
+    local length = historyLength or 47
+    assert(length > 1, "[SpatialComponent] history needs at least two slots to interpolate")
 
     return setmetatable({
         anchor = nil,
@@ -39,11 +47,11 @@ function Spatial.new(historyLength: number?)
         -- Counts samples EVER written, not slots used. The ring index is
         -- derived from it, so it must never be reset while samples are live.
         _cursor = 0,
-    }, Spatial)
+    }, SpatialComponent)
 end
 
 -- Which physical slot holds logical sample k.
-function Spatial:_index(k: number): number
+function SpatialComponent:_index(k: number): number
     return ((k - 1) % self._length) + 1
 end
 
@@ -51,18 +59,18 @@ end
 -- set here rather than in the constructor because an entity exists before
 -- its body does -- a player's PlayerEntity is built on join, and their
 -- character spawns some time afterwards.
-function Spatial:setAnchor(anchor: BasePart, radius: number)
+function SpatialComponent:setAnchor(anchor: BasePart, radius: number)
     assert(typeof(anchor) == "Instance" and anchor:IsA("BasePart"),
-        "[Spatial] anchor must be a BasePart")
+        "[SpatialComponent] anchor must be a BasePart")
     assert(type(radius) == "number" and radius > 0,
-        "[Spatial] hurtbox radius must be positive")
+        "[SpatialComponent] hurtbox radius must be positive")
 
     self.anchor = anchor
     self.radius = radius
     self:clearHistory()
 end
 
-function Spatial:clearAnchor()
+function SpatialComponent:clearAnchor()
     self.anchor = nil
     self:clearHistory()
 end
@@ -70,27 +78,27 @@ end
 -- History from a previous body is not history for this one. A respawned
 -- character that inherited the old buffer would be rewindable to a position
 -- it never occupied, which is worse than having no history at all.
-function Spatial:clearHistory()
+function SpatialComponent:clearHistory()
     self._cursor = 0
     table.clear(self._times)
     table.clear(self._poses)
 end
 
-function Spatial:isAnchored(): boolean
+function SpatialComponent:isAnchored(): boolean
     local anchor = self.anchor
     return anchor ~= nil and anchor:IsDescendantOf(workspace)
 end
 
 -- Live position, straight off the instance. Correct for anything happening
 -- NOW; wrong for anything a client saw, which is what poseAt is for.
-function Spatial:getCFrame(): CFrame?
+function SpatialComponent:getCFrame(): CFrame?
     if not self:isAnchored() then
         return nil
     end
     return self.anchor.CFrame
 end
 
-function Spatial:sampleCount(): number
+function SpatialComponent:sampleCount(): number
     return math.min(self._cursor, self._length)
 end
 
@@ -98,7 +106,7 @@ end
 -- against its own rewind ceiling -- the two constants are chosen in
 -- different files and a mismatch is silent, so it is verified rather than
 -- assumed.
-function Spatial:historyLength(): number
+function SpatialComponent:historyLength(): number
     return self._length
 end
 
@@ -106,7 +114,7 @@ end
 -- asserted: this runs inside a pcall'd Scheduler tick, so an assert here
 -- would warn once per frame forever instead of failing usefully. The
 -- binary search in poseAt depends on ordering, so the guard is not optional.
-function Spatial:record(t: number, cf: CFrame)
+function SpatialComponent:record(t: number, cf: CFrame)
     if self._cursor > 0 then
         local newest = self._times[self:_index(self._cursor)]
         if t <= newest then
@@ -129,7 +137,7 @@ end
 -- caller asked further back than the buffer reaches, which SpatialService's
 -- MAX_REWIND is supposed to prevent -- the clamp is a floor under a bug,
 -- not a normal path.
-function Spatial:poseAt(t: number): CFrame?
+function SpatialComponent:poseAt(t: number): CFrame?
     local count = self:sampleCount()
     if count == 0 then
         return nil
@@ -174,7 +182,7 @@ end
 -- Diagnostics only. Returns the age in seconds of the oldest and newest
 -- samples relative to `now`, so a caller can confirm the buffer actually
 -- spans the rewind window it is being asked about.
-function Spatial:span(now: number): (number, number)
+function SpatialComponent:span(now: number): (number, number)
     local count = self:sampleCount()
     if count == 0 then
         return 0, 0
@@ -184,4 +192,4 @@ function Spatial:span(now: number): (number, number)
     return now - oldest, now - newest
 end
 
-return Spatial
+return SpatialComponent

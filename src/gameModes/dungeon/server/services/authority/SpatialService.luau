@@ -14,23 +14,47 @@
 -- skill and miss identically-aimed hits with another, and nothing would look
 -- broken from the inside of either.
 --
--- ATTACHMENT IS EXPLICIT, AND THAT BUYS SOMETHING. There is no entity
--- registry anywhere in this codebase -- ServerManager holds players and
--- nothing holds enemies. Because attaching is a deliberate call, the set of
--- attached entities IS the candidate set for hit detection: anything that
--- can be hit is by definition something that registered a hurtbox, and
--- nothing else can ever be returned by a query.
+-- ATTACHMENT IS EXPLICIT, AND THAT BUYS SOMETHING. EntityService holds every
+-- live entity, but being registered is not the same as being hittable: a
+-- player exists from the moment they join and their character does not, and
+-- it detaches and re-attaches on every respawn. Because attaching is a
+-- deliberate call, the set of attached entities IS the candidate set for hit
+-- detection -- anything that can be hit is by definition something that
+-- registered a hurtbox, and nothing else can ever be returned by a query.
 
 local SpatialService = {}
 
 -- Sampling rate. Roblox replicates character position at roughly 20Hz, so a
 -- 60Hz sampler writes each replicated position into three consecutive slots
 -- and learns nothing from two of them. 30Hz already oversamples the source.
+--
+-- The 20Hz figure is community-measured, not documented -- Roblox publishes
+-- the physics STEP rate (60/120/240Hz, adaptive) but not the replication
+-- rate, and replication is throttled. Treat it as an estimate. It is only
+-- load-bearing as a floor: any real rate at or under 30Hz makes this correct.
 local SAMPLE_HZ = 30
 
--- Past this, a player is being hit by something that left their screen half
--- a second ago. It is also the exploit ceiling: it bounds what a
--- manipulated latency figure could ever buy.
+-- How far back a query is ALLOWED to reach. Past this, a player is being hit
+-- by something that left their screen half a second ago. It is also the
+-- exploit ceiling: it bounds what a manipulated latency figure could ever
+-- buy, which matters because latency can be induced even though the figure
+-- itself is server-measured.
+--
+-- 0.5 IS ALREADY PERMISSIVE, which is easy to misread as conservative.
+-- Competitive shooters land near 0.2 (Source's sv_maxunlag is 0.2, and the
+-- modern hero shooters are in the same neighbourhood). This game gets to be
+-- more generous than that because the rewound thing is usually an NPC: the
+-- cost of over-rewinding here is other players watching damage land on empty
+-- air, not a human being robbed of a dodge. That buys room, not licence.
+--
+-- WHAT HAPPENS PAST THIS IS DEGRADATION, NOT FAILURE, and that is the whole
+-- design. A 600ms player is compensated 0.5s of their ~0.7s deficit, so
+-- their swings under-lead a moving target by whatever ground it covered in
+-- the uncompensated remainder. Bounded, self-limiting, and survivable --
+-- which is the point, because nobody is playing well at 600ms regardless.
+-- Rewind corrects aim. Nothing here can correct the fact that a telegraph
+-- reaches that player 600ms late, so there is a ceiling on how much buying
+-- more of it helps.
 local MAX_REWIND = 0.5
 
 -- Roblox characters replicate at ~20Hz and clients interpolate on top of
@@ -39,10 +63,35 @@ local MAX_REWIND = 0.5
 -- independently.
 local INTERPOLATION_CONSTANT = 0.1
 
--- Two slots of margin past the rewind ceiling, so the oldest sample is
--- always strictly older than MAX_REWIND and poseAt never has to clamp on a
--- legitimate query.
-local HISTORY_LENGTH = math.ceil(MAX_REWIND * SAMPLE_HZ) + 2
+-- How far back the buffer STORES, which is deliberately further than
+-- MAX_REWIND reaches. These used to be one number and they answer two
+-- different questions:
+--
+--   MAX_REWIND       how far we reach  -> costs fairness; is the exploit ceiling
+--   HISTORY_SECONDS  how much we keep  -> costs memory, and memory is free here
+--
+-- Free is meant literally. A sample is a float plus a CFrame, call it ~90
+-- bytes; 47 samples is about 4KB per entity, so a full dungeon is a quarter
+-- of a megabyte and a pathological 500-entity server is single-digit MB.
+-- poseAt binary-searches, so a longer buffer costs one extra comparison.
+--
+-- 1.5s covers the worst reading of a 600ms player (see PING_TO_ROUND_TRIP:
+-- if that constant is wrong, their window is 1.3s, not 0.7s), so MAX_REWIND
+-- can be retuned to anything defensible without this number having to move.
+--
+-- BE HONEST ABOUT WHAT THE SPLIT BUYS, because the obvious argument for it
+-- does not hold. It does NOT protect against someone raising MAX_REWIND --
+-- the old coupled form derived the length from it automatically, and the
+-- attach assert caught the stale component default loudly. What it actually
+-- buys is headroom against the rate divergence described on
+-- verifySampleRate: tolerance for the REAL tick rate went from <=34Hz to
+-- <=94Hz. The boot assert below then closes a hazard the split itself
+-- introduced. Net positive, but for a different reason than it looks.
+local HISTORY_SECONDS = 1.5
+
+-- Two slots of margin past the stored span, so the oldest sample is always
+-- strictly older than any legitimate query and poseAt never has to clamp.
+local HISTORY_LENGTH = math.ceil(HISTORY_SECONDS * SAMPLE_HZ) + 2
 
 -- MEASURED. Player:GetNetworkPing() returns SECONDS, not milliseconds.
 --
@@ -71,7 +120,22 @@ local PING_TO_ROUND_TRIP = 2
 SpatialService._attached = {}      -- entity -> true
 SpatialService._attachedCount = 0
 
+-- One-shot latch for the observed-rate check in tick. See verifySampleRate.
+SpatialService._rateVerified = false
+
 function SpatialService:boot()
+    -- THE ONE INVARIANT THE SPLIT CREATES, and it is worth a boot gate
+    -- because violating it errors nowhere. Reach past what the buffer stores
+    -- and poseAt clamps to its oldest sample, returning a real position from
+    -- the wrong moment -- every hit slightly wrong, forever, with nothing in
+    -- a log to suggest it. Same family as the PING_TO_ROUND_TRIP unit bug
+    -- above: a wrong number feeding a clamp is invisible to tests that only
+    -- check the clamp held.
+    assert(HISTORY_SECONDS >= MAX_REWIND, string.format(
+        "[SpatialService] history stores %.2fs but rewind reaches %.2fs -- "
+            .. "queries past the buffer resolve against the oldest sample instead",
+        HISTORY_SECONDS, MAX_REWIND))
+
     -- Nothing to declare. Position is not a Fact anything subscribes to;
     -- it is queried, never announced.
 end
@@ -86,16 +150,29 @@ function SpatialService:attach(entity, anchor: BasePart, radius: number)
     assert(type(entity) == "table" and entity.spatial,
         "[SpatialService] entity has no Spatial component")
 
-    -- The buffer length is chosen by whoever built the component, but the
-    -- rewind ceiling is chosen here. Checked at attach rather than trusted,
-    -- because the failure is silent: a buffer too short to span MAX_REWIND
-    -- makes poseAt clamp to its oldest sample, which returns a real
-    -- position from the wrong moment. Nothing errors and hits land slightly
-    -- wrong forever.
+    -- THE ATTACHED SET IS THE TARGET SET, so everything in it has to be a
+    -- real entity. TargetResolution's callers read entity.identity on every
+    -- candidate returned, so a table carrying a spatial component and nothing
+    -- else is a target that damage cannot be attributed to -- it surfaces as
+    -- a crash deep inside resolution, at the far end of the pipeline from the
+    -- attach call that caused it.
+    --
+    -- This does NOT make the service care about ids: it still keys by the
+    -- entity table and never reads the value. It requires only that the thing
+    -- it is about to make hittable is something the rest of the game can name.
+    -- PingProbe's stub entity is what this was added for.
+    assert(entity.identity, "[SpatialService] entity has no Identity component")
+
+    -- The buffer length is chosen by whoever built the component, but how
+    -- much history this service expects is chosen here. Checked at attach
+    -- rather than trusted, because the failure is silent: a buffer too short
+    -- makes poseAt clamp to its oldest sample, which returns a real position
+    -- from the wrong moment. Nothing errors and hits land slightly wrong
+    -- forever.
     local available = entity.spatial:historyLength()
     assert(available >= HISTORY_LENGTH, string.format(
         "[SpatialService] Spatial buffer holds %d samples; %d needed to span %.2fs at %dHz",
-        available, HISTORY_LENGTH, MAX_REWIND, SAMPLE_HZ))
+        available, HISTORY_LENGTH, HISTORY_SECONDS, SAMPLE_HZ))
 
     entity.spatial:setAnchor(anchor, radius)
 
@@ -158,6 +235,70 @@ function SpatialService:tick(_dt: number)
     if lost then
         for _, entity in ipairs(lost) do
             self:detach(entity)
+        end
+    end
+
+    if not self._rateVerified then
+        self:_verifyRateOnce(now)
+    end
+end
+
+-- SAMPLE_HZ CONTROLS NOTHING, and that is the trap this guards.
+--
+-- tick() records whenever it is called, so SAMPLE_HZ does not set the rate --
+-- it only sizes the buffer. The rate is the Scheduler's row, which is a
+-- SECOND COPY of the number, living in a different file. Nothing makes them
+-- agree.
+--
+-- If they diverge, neither assert in this file fires: both compare sample
+-- COUNTS, and this failure is about DURATION. A buffer sampled faster than
+-- assumed holds its full complement of samples while spanning less
+-- wall-clock time than MAX_REWIND reaches, so poseAt clamps to its oldest
+-- sample and every rewound query resolves against the wrong moment --
+-- silently, forever. Same shape as the PING_TO_ROUND_TRIP unit bug above.
+--
+-- ONLY THE FAST DIRECTION IS DANGEROUS. Sampling slower than assumed makes
+-- each sample cover more time, so the buffer spans MORE, never less; the
+-- cost is coarser interpolation between samples, not a clamp. A server
+-- dropping frames is therefore not the risk here. A changed Scheduler row is.
+--
+-- Measured against the buffer that actually exists rather than the rate it is
+-- assumed to have been filled at. Returns nil for the span when there is
+-- nothing to measure -- a partly filled buffer is not evidence either way.
+function SpatialService:verifySampleRate(spatial, now: number): (boolean, number?)
+    if spatial:sampleCount() < spatial:historyLength() then
+        return true, nil
+    end
+
+    local oldest = spatial:span(now)
+    return oldest >= MAX_REWIND, oldest
+end
+
+-- Latches on the first buffer with anything to say. A mismatched rate is a
+-- static property of the config, so one measurement settles it and the check
+-- costs nothing for the rest of the server's life.
+--
+-- Warns rather than asserts because this runs inside a pcall'd Scheduler
+-- tick, where an assert is swallowed and retried every frame -- the same
+-- reasoning SpatialComponent:record uses for ignoring stale timestamps.
+function SpatialService:_verifyRateOnce(now: number)
+    for entity in pairs(self._attached) do
+        local spatial = entity.spatial
+        if spatial then
+            local ok, observed = self:verifySampleRate(spatial, now)
+            if observed then
+                self._rateVerified = true
+                if not ok then
+                    warn(string.format(
+                        "[SpatialService] sampling faster than assumed: a full %d-sample "
+                            .. "buffer spans %.3fs, but MAX_REWIND reaches %.2fs. SAMPLE_HZ "
+                            .. "says %dHz -- check the SpatialService row in Scheduler.luau. "
+                            .. "Rewound queries are clamping to the oldest sample and "
+                            .. "resolving against the wrong moment.",
+                        HISTORY_LENGTH, observed, MAX_REWIND, SAMPLE_HZ))
+                end
+                return
+            end
         end
     end
 end
@@ -250,6 +391,7 @@ function SpatialService:constants()
         sampleHz = SAMPLE_HZ,
         maxRewind = MAX_REWIND,
         interpolationConstant = INTERPOLATION_CONSTANT,
+        historySeconds = HISTORY_SECONDS,
         historyLength = HISTORY_LENGTH,
         pingToRoundTrip = PING_TO_ROUND_TRIP,
     }
