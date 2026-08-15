@@ -1,4 +1,4 @@
-# Shattered Realms — Architecture Reference
+﻿# Shattered Realms — Architecture Reference
 ### The Single Source of Truth for How This Game Is Built
 
 > This document exists because you have walked away from this project before
@@ -756,7 +756,7 @@ receipt:
     id        = generateUUID(),   -- e.g. "a3f9-12bc-..." unique per instance
     eventType = "COMBAT",
     subType   = "MELEE",
-    data      = { actorId, targetId, skillId, hitCount },
+    data      = { actorId, targetId, skillId, hitsPerTarget },
     timestamp = os.time(),
 }
 ```
@@ -860,7 +860,7 @@ CombatService.OnAttack(event)
     its own inherent last steps — Part 8 — nothing here has to ask for that)
   → check: dead? trigger kill flow
   → push CombatService's own outbound EventTape confirmation directly —
-    { totalDamage, hitCount, isCrit, newHp } — this is what the client's
+    { totalDamage, hitsPerTarget, isCrit, newHp } — this is what the client's
     Damage Number System (Part 15) actually consumes, inherently, as part
     of what "a hit landed" already means. Not a Signal. Signal never
     crosses the client/server boundary at all — nothing client-side can
@@ -869,7 +869,7 @@ CombatService.OnAttack(event)
   ↓
 Only now, after everything above has already happened and already reached
   the client on its own: Signal["Combat.OnHit"]:Fire(attacker, target,
-  totalDamage, hitCount, isCrit, newHp) — ONE fire per activation, for
+  totalDamage, hitsPerTarget, isCrit, newHp) — ONE fire per activation, for
   genuinely optional server-side reactions only
   ↓                        ↑ the only Signal call in this entire flow, and
   │                          notably not the mechanism anything above depended on
@@ -1419,6 +1419,84 @@ BossEntity = {
 }
 ```
 
+### Two Existences — The Lua Entity and the Roblox Body
+
+Every fighter in this game exists **twice**, and the two halves are cleaned up
+by completely different rules. Nearly every lifecycle bug comes from treating
+them as one thing.
+
+**The mental half — the Lua table.** `entity`, its components, its ring
+buffer. Lua tracks whether anything still points at a table, and when nothing
+does, it deletes it. Automatically. There is no free, no dispose, and no way
+to make one happen sooner.
+
+**The physical half — Roblox Instances.** The Part, the Model, the Humanoid.
+These are not Lua tables. They live in the Roblox instance tree — the one
+visible in Studio's Explorer — and setting `part.Parent = workspace` is what
+puts one there. From that moment **Roblox holds it, not your code.** Dropping
+every Lua reference does not remove it; it stays in the world until something
+calls `:Destroy()` on it.
+
+The consequence is not a memory leak anyone would spot in a profiler. It is a
+map that slowly fills with corpses.
+
+**Three things outlive a Lua table, and `destroy()` exists for exactly these:**
+
+| What | Why it survives | What releases it |
+|---|---|---|
+| Instances | Roblox's tree holds them | `:Destroy()` |
+| Event connections | The connection holds the closure, which holds the entity — and it keeps *firing* | `:Disconnect()` |
+| Entries in long-lived tables | A strong key keeps the entity reachable and keeps it processed every tick | the owning service's removal call |
+
+The third is the subtle one, and it is why `EntityService:deleteEntity` calls
+`SpatialService:detach` rather than leaving it to the entity. An entity's
+membership in another system's table is not the entity's own business to
+clean up, and every system that gets one is a step some caller can forget.
+
+**Ordering constraint this creates.** Teardown detaches before it destroys, so
+that an attack resolving mid-teardown cannot find a half-dismantled entity.
+But detaching also clears the spatial component's handle on the body — so by
+the time `destroy()` runs, the entity can no longer reach its own Instance
+through its components. Anything that must destroy a Model has to hold its own
+reference to it. That is correct independently: the spatial anchor is the
+*root part*, and what you want destroyed is the whole *Model*.
+
+### Why the Component Is Called `Identity`, Not `Entity`
+
+Recorded because it will be asked again. The component holding `_type`,
+`_id` and `_ownerId` looks like a base class — every entity has exactly one,
+it's mandatory, and it feels like the "core" the rest is built around. Three
+reasons it isn't and isn't named as one:
+
+**It is has-a, not is-a.** A base class would mean `PlayerEntity` *is an*
+`Entity` and inherits from it. `PlayerEntity` **has an** identity, held in a
+field, exactly the way it holds `stats` and `spatial`. Nothing is inherited
+and nothing can be overridden. It is a mandatory peer, not a parent — and
+everything above in this Part is about why that distinction is load-bearing
+rather than pedantic.
+
+**The name would collide with its own container.** In this model the entity
+*is* the outer table. Naming a field inside it `entity` produces
+`entity.entity:getId()`, a sentence that cannot be read. `entity.identity`
+says what it is.
+
+**Every other component is named for what it holds** — `Stats` holds stats,
+`Resources` holds resources, `Spatial` holds spatial data. This one holds
+identity. `Entity` would be the only component named after the thing that
+contains it.
+
+**Where the intuition is right, and in a different architecture would win:**
+in a *pure* ECS an entity genuinely is just an id, with components attached
+to that id — there, `Entity = { id }` is correct, and the Matter discussion
+above is where that road was considered and not taken. Here the container is
+the entity, so a component cannot also be one.
+
+**And the shared thing the intuition is reaching for does exist.** It is not
+a base class; it is the component manifest flagged at the end of this Part —
+a Content Layer row declaring which components an entity type gets, and a
+builder that assembles it. "A player variant" is a data edit against that
+list, never a subclass.
+
 ### The Weapon Drop — Why This All Matters
 
 ```lua
@@ -1446,18 +1524,29 @@ StatService.invalidate(player)
 
 ### Component Registry
 
+**Naming:** this document names components by what they hold — "the Identity
+component," "the Stats component." The *files* carry a `Component` suffix
+(`IdentityComponent.luau`, `StatsComponent.luau`), which is what keeps
+`SpatialComponent` and `SpatialService` distinguishable at a require site.
+Conceptual name here, suffixed name on disk.
+
 **Core components — shared across any entity type:**
 
 | Component | Holds | Invariants It Enforces |
 |---|---|---|
-| `Identity` | id, type, subtype, ownerId | id is immutable after creation |
-| `Vitals` | hp, maxHp, isDead | hp never exceeds maxHp; hp never goes below 0 from component side |
+| `Identity` | id, type, ownerId | id is immutable after creation; type must be declared in `IdentityRegistry` |
 | `Stats` | base stat table, version number | base stats are typed numbers; version increments on every change |
 | `Buffs` | active buff list | no duplicate buff ids; expired buffs are removed before getAll() |
 | `StateFlags` | FROZEN, DYING, INVULNERABLE, IMMOBILIZED, expiry per timed flag | flags are booleans or timed; no domain-specific meaning lives here — see Part 9 |
 | `Equipment` | named slots → ItemEntity | slot names must match declared slots; one item per slot |
 | `Inventory` | ordered item slots, capacity | enforces maxSlots; handles stack merging; stable slot indices |
 | `Resources` | resourceId → current value | values are numbers; get() returns 0 for unknown resourceIds |
+| `Spatial` | world anchor, hurtbox radius, position ring buffer | buffer is preallocated and never grows; re-anchoring clears history — see `HitDetection.md` |
+
+**`Vitals` is gone and was never built.** Earlier revisions of this table
+listed `Vitals | hp, maxHp, isDead`. Part 8 resolved that HP is a resource
+like any other and lives in `.resources["HP"]`, with `MaxHP` as its declared
+ceiling. Two homes for one number is how they drift apart.
 
 **Domain components — specific to certain entity types:**
 
@@ -2104,6 +2193,37 @@ generic lines already living inside code that exists regardless.
 
 ### Multi-Hit Skills — One Calculation, Cosmetic Fragmentation
 
+**Four different numbers get called "hits" in conversation, and none of them
+may be called that in code.** Each counts a different thing, so each name
+carries its own denominator:
+
+| Name | Counts | Declared on | Multiplies damage? |
+|---|---|---|---|
+| `hitsPerTarget` | strikes, **per enemy struck** | the skill (Content Layer) | No — one calculation, fragmented cosmetically |
+| `maxTargets` | **distinct enemies** one activation may strike | the skill's `HitVolume` | No — it caps, never adds |
+| `samples` | **evaluations of the volume** across its active window | the skill's `HitVolume` | No — results are deduplicated by entity |
+| `chainJumps` *(PLANNED)* | **sequential re-targets**, each a fresh query from the last enemy struck | the skill | Each jump is its own activation |
+
+The trap is the first two sitting side by side in one skill definition.
+"This attack hits 6" is a sentence with no meaning — six strikes on one
+enemy, or one strike on six enemies. Neither name can be read the wrong way,
+which is the entire reason they are spelled like that.
+
+`samples` is the subtlest, because it is not a gameplay number at all. It
+exists so that a fast swing is not missed in the gap between two evaluations,
+and its results are deduplicated per entity: three samples catching the same
+enemy is **one** hit, not three. It belongs to detection, and it never
+reaches content data. See HitDetection.md.
+
+**`chainJumps` is not `maxTargets`.** Chain lightning arcing through five
+enemies is five sequential resolutions, each originating from the previous
+target, each with its own falloff and its own reach. Capping a single volume
+at five is a different mechanic that happens to produce a similar-looking
+number. Building one with the other produces a skill that hits five enemies
+simultaneously from the caster and calls itself a chain.
+
+---
+
 A single skill activation may be declared (in content data) as producing
 several cosmetic "hits" — a sword slash might be "10 hits" per its own
 description. This does **not** mean the server performs ten independent
@@ -2116,23 +2236,26 @@ applied once, for the whole activation:
   meaningful gameplay difference between "10 independent 10-damage hits"
   and "one 100-damage event," and computing 10 independent rolls for a
   purely cosmetic effect is unnecessary overhead for zero mechanical gain.
-- The declared **hit count** (10, in this example) is still real and
+- The declared **`hitsPerTarget`** (10, in this example) is still real and
   server-known — it comes from content data and drives the Attack-Based
   Shield counter (Part 9) regardless of how the damage total was computed.
+  Note which counter it drives: a shield that absorbs "the next 3 hits"
+  counts strikes on *itself*, so `hitsPerTarget` is the number it consumes.
+  `maxTargets` never enters that arithmetic.
 - `ResourceService.drain()` is called **once**, with the final total.
 - The outbound message to the client (Part 12, Part 15) carries the
-  aggregate result — `{ totalDamage, hitCount, isCrit, newHp }` — and the
+  aggregate result — `{ totalDamage, hitsPerTarget, isCrit, newHp }` — and the
   client's Damage Number System (Part 15) is responsible for fabricating a
-  staggered, cosmetic cascade of `hitCount` individual numbers from that one
+  staggered, cosmetic cascade of `hitsPerTarget` individual numbers from that one
   total. If the activation crit, every fabricated number in the cascade can
   reflect that visually (size, color, sound) without needing ten independent
   crit rolls to justify it.
 - This applies to a single skill activation. A *combo* of several distinct,
   separately-fired activations (e.g. a player chaining multiple real attacks)
   is a different case — each real activation still goes through this same
-  flow independently, and their hit counts sum for shield-counting purposes,
-  but each one gets its own real Event, its own real calculation, and its own
-  real Signal fire.
+  flow independently, and their `hitsPerTarget` values sum for shield-counting
+  purposes, but each one gets its own real Event, its own real calculation,
+  and its own real Signal fire.
 
 ---
 
@@ -3109,11 +3232,11 @@ A single skill activation that cosmetically represents multiple hits (Part
 8) fires its Signal **once**, carrying the aggregate:
 
 ```lua
-OnHit:Fire(attacker, target, totalDamage, hitCount, isCrit, newHp)
+OnHit:Fire(attacker, target, totalDamage, hitsPerTarget, isCrit, newHp)
 ```
 
 Server-side listeners are written expecting one fire per real activation
-with a `hitCount` field, not an array to iterate. The client is not among
+with a `hitsPerTarget` field, not an array to iterate. The client is not among
 them — Signal never reaches the client, and the outbound EventTape diff
 carrying this same payload is pushed by `CombatService` inherently,
 independent of whether this Signal fires or who is listening.
@@ -4076,7 +4199,7 @@ Client:
 Server:
   5. Validate, resolve (Part 5, Part 8)
   6a. VALID → push the outbound EventTape confirmation, tagged with the same
-      eventId, carrying totalDamage / hitCount / isCrit / newHp. (The Fact
+      eventId, carrying totalDamage / hitsPerTarget / isCrit / newHp. (The Fact
       Signal also fires, separately and server-side only — it is NOT what
       reaches the client. Signal never crosses the wire; see Part 11.5.)
   6b. INVALID → send an explicit small reject message, also tagged with the
@@ -4154,9 +4277,9 @@ correction actually looks bad on.
 Pre-allocated pool of 80 ScreenGui TextLabels. Never created at runtime. Recycled.
 This is what actually consumes the outbound EventTape stream described in
 Part 12 — the server sends one aggregate result per activation
-(`totalDamage`, `hitCount`, `isCrit`), and this system is responsible for
-fabricating a staggered, cosmetic cascade of `hitCount` individual numbers
-from it, not for receiving `hitCount` separate server messages.
+(`totalDamage`, `hitsPerTarget`, `isCrit`), and this system is responsible for
+fabricating a staggered, cosmetic cascade of `hitsPerTarget` individual numbers
+from it, not for receiving `hitsPerTarget` separate server messages.
 
 ```
 On load:          create 80 TextLabels, all in available pool

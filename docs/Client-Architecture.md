@@ -1,4 +1,4 @@
-# Shattered Realms — Client Architecture
+﻿# Shattered Realms — Client Architecture
 ### How The Client Is Built, And Why It Isn't A Copy Of The Server
 
 > **Read alongside `Architecture-Reference.md`.** That document is the server
@@ -477,7 +477,7 @@ function CombatPresenter.receive(event)
 
         -- 3. Fabricate the cosmetic cascade from the aggregate payload
         DamageNumbers.cascade(event.targetId, event.totalDamage,
-                              event.hitCount, event.isCrit)
+                              event.hitsPerTarget, event.isCrit)
 
         -- 4. Playback
         VFX.playHit(event.targetId, event.isCrit)

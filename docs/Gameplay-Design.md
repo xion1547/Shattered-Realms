@@ -325,6 +325,37 @@ That is exactly what makes them affordable where a parry clash is not.
   entirely in the tell — there's no mitigation to fall back on. This is a
   spectacle beat, not a routine check.
 
+### Attack Shape — Hits, Breadth, and Chains
+
+Three independent axes, kept separate so a skill can be any combination of
+them. The first is MapleStory DNA and is the single biggest contributor to
+how good an attack *feels*.
+
+- **Hits per target.** How many times one attack strikes the **same** enemy.
+  A 6-hit skill and a 1-hit skill of equal total damage are mechanically
+  identical and feel nothing alike — the cascade of numbers is the entire
+  sensation of hitting something hard. This is the default lever for weight,
+  and it is nearly free: the server computes one damage total and one crit
+  roll, and the client fabricates the cascade from it (Architecture Part 8).
+- **Breadth.** How many **distinct enemies** one attack may strike. Attacks
+  are volume-based, not target-locked — you swing into a space and everything
+  with a body in that space is struck. A "single-target" skill is not a
+  different system; it is the same swing with breadth capped at one, plus the
+  client's aim used as a tiebreak for which one.
+- **Chains.** *(Planned, not built.)* Chain lightning and kin: the attack arcs
+  from the first enemy struck to a second, then a third, each jump reaching
+  out from the **previous body** rather than from the caster. Distinct from
+  breadth in feel as much as implementation — a chain has travel and order,
+  so the player can watch it resolve.
+
+The three multiply into the roster's texture: a fencer's flurry is high hits
+/ narrow, a heavy sweep is low hits / wide, a mage's arc is low hits / narrow
+/ long chain.
+
+The names for all three are fixed in Architecture Part 8 — `hitsPerTarget`,
+`maxTargets`, `chainJumps` — because "hits" on its own is ambiguous between
+the first two and always will be.
+
 ### Class Mastery Verbs
 Each class gets basic dodge, plus one bespoke verb — the roster's "mastery
 high" is spread across genuinely different skills, not five reskins of the

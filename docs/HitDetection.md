@@ -220,10 +220,32 @@ One Scheduler row:
 60Hz sampler writes each replicated position into three consecutive slots and
 learns nothing from two of them. 30Hz is already oversampling the source.
 
-**Buffer length** is `MAX_REWIND × 30`, rounded up. At a 0.5s ceiling that
-is 15 slots. Fifteen `CFrame`s per entity is on the order of a kilobyte;
-two hundred entities is a fifth of a megabyte. Memory is not a consideration
-here and should not be designed around.
+**Buffer length** is `HISTORY_SECONDS × 30`, rounded up, plus two slots of
+margin — 47 at a 1.5s span.
+
+**How much is stored and how far we reach are separate constants**, and were
+deliberately split after starting out as one. They answer different questions
+and are paid for in different currencies:
+
+| | question | cost |
+|---|---|---|
+| `MAX_REWIND` | how far a query may reach | fairness, and it is the exploit ceiling |
+| `HISTORY_SECONDS` | how much is kept | memory, which is free at this scale |
+
+A sample is a float plus a `CFrame`, roughly 90 bytes, so 47 slots is about
+4KB per entity — a quarter of a megabyte for a full dungeon. `poseAt` binary
+searches, so the longer buffer costs one extra comparison. Memory is not a
+consideration here and should not be designed around.
+
+Storing more than is reachable is what makes `MAX_REWIND` a tuning dial with
+nothing downstream to re-derive. It is sized for the *pessimistic* reading of
+a 600ms player (1.3s, if `PING_TO_ROUND_TRIP` turns out to be wrong) so that
+retuning the ceiling can never quietly outrun its own storage.
+
+**The invariant `HISTORY_SECONDS >= MAX_REWIND` is asserted at boot** and
+again in `SpatialTests`, because violating it errors nowhere: `poseAt` clamps
+to its oldest sample and returns a real position from the wrong moment,
+forever, with nothing in a log to suggest it.
 
 **The Scheduler's existing ordering does not need to change, and this was
 checked rather than assumed.** `Scheduler.start` drains the EventTape router
@@ -309,6 +331,19 @@ clamped to [now − MAX_REWIND, now]
 |---|---|---|
 | `INTERPOLATION_CONSTANT` | 0.1s | Roblox character replication is ~20Hz and clients interpolate on top of it. Both open-source Roblox rewind implementations converged on this figure independently. |
 | `MAX_REWIND` | 0.5s | Past this, a player is being hit by something that left their screen half a second ago. Also the exploit ceiling: it bounds what a manipulated latency figure could buy. |
+| `HISTORY_SECONDS` | 1.5s | How much is stored, as opposed to how far is reachable. Sized so the ceiling can move without this having to. |
+
+**0.5s is already permissive, not conservative.** Competitive shooters land
+near 0.2s — Source's `sv_maxunlag` is 0.2. This game gets more room because
+the rewound thing is usually an NPC: over-rewinding here means other players
+watch damage land on empty air, not that a human was robbed of a dodge.
+
+**Past the ceiling is degradation, not failure, and that is the design.** A
+600ms player is compensated 0.5s of a ~0.7s deficit, so their swings
+under-lead a moving target by whatever ground it covered in the remainder —
+bounded, self-limiting, survivable. There is a ceiling on how much buying more
+would help, because rewind corrects *aim* and nothing here can correct the
+fact that a telegraph reaches that player 600ms late.
 
 **Clock source is `workspace:GetServerTimeNow()`, never `os.clock()`.**
 `os.clock()` has an arbitrary per-process origin and returns different values
