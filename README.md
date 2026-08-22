@@ -8,6 +8,8 @@ made once instead of re-derived.
 
 | Document | What it owns |
 |---|---|
+| [WorkingAgreement.md](docs/WorkingAgreement.md) | **How decisions get justified here.** A thing existing is not an argument for it — not the code, not these documents. Read before proposing a change to any of them. |
+| [NextSteps.md](docs/NextSteps.md) | **What to build next, in what order, and why that order.** Carries the reasoning so the queue can be attacked rather than trusted. |
 | [Gameplay-Design.md](docs/Gameplay-Design.md) | **What the game is and why it's fun.** Bosses, combat mitigation, relics, gauntlet, gacha, progression. Not how any of it is built. |
 | [Architecture-Reference.md](docs/Architecture-Reference.md) | **How the server is built, and why.** The single source of truth for layers, services, entities, security, and every settled design decision. Read top to bottom when returning after time away. |
 | [Client-Architecture.md](docs/Client-Architecture.md) | **How the client is built.** Widgets, bindings, presenters, prediction. The server document stays authoritative for anything crossing the wire. |

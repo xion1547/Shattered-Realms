@@ -3,7 +3,10 @@
 What exists, what is proven, and what is not. **Scan the tables — nothing here
 needs reading start to finish.**
 
-Last updated: **2026-08-15**. Suite at that point: **197 passed, 0 failed.**
+Last updated: **2026-08-22**. Suite: **206 passed, 0 failed.**
+
+> **What to build next lives in `NextSteps.md`**, with the reasoning behind the
+> ordering. This file is only what exists and what is proven.
 
 ---
 
@@ -32,10 +35,12 @@ wired to anything. Everything below marked TESTED could be dead code.
 | Components | TESTED | 24 | Every component's invariants |
 | Spatial (component + service) | **VERIFIED** | 25 | Ring buffer wrap, interpolation, rewind arithmetic — plus live: buffer spanning 1.55s, rewound positions matching live on static targets |
 | Overlap — **volume shapes** | **VERIFIED** | 11 | Pure math, plus live arc behaviour hand-checked (below) |
-| Overlap — **target shape** | **WRONG BY DESIGN** | — | Every test assumes one sphere per body. Hurtboxes should be ~6 layered capsules mirroring the rig. Four capsule-target rewrites owed — `HitDetection.md` §7.4 |
+| Overlap — **target shape** | **MID-REBUILD** | — | Tests assume one capsule per body. `HurtboxComponent` now holds ten limb-anchored zones and is **drawn but not tested against** — resolution still uses the single capsule. `NextSteps.md` items 1–4 |
+| `HurtboxComponent` + `HurtboxDefinitions` | **BUILT, CHECKED BY EYE** | — | Ten capsules for a player, each welded to its own limb and following the pose; one for a dummy. Verified by looking at the overlay, which is the only way this is checkable (HitDetection 0.5). **Nothing tests against it yet** |
+| Per-zone position history | **ABSENT — blocks the above** | — | One buffer per body cannot serve ten zones in ten places. ~30KB per body. `NextSteps.md` item 1 |
 | Sweep (`sweep` field, travelling blade) | **VERIFIED** | — | 140° over 0.35s in 8 samples. Live-checked: the same swing caught targets on samples 6–8 with 1–5 empty, and on another swing 1–4 with 5–8 empty — **a static fan cannot produce that.** Dedup across the swing confirmed ("2 in volume, 1 new") |
 | Stopwatch driver (`CombatService:tick`) | **VERIFIED** | — | Samples fire ~50ms apart at 60Hz; every sample is evaluated at its own moment and rewound normally, so the whole window stays in history — §8.2 |
-| Enemy-attack sweeps | ABSENT | — | The stopwatch is shape-agnostic and should serve them unchanged, but no enemy has ever attacked, so this is untested rather than broken |
+| Enemy-attack sweeps | **REMOVED 2026-08-21** | — | `EnemyAttackDemo` is in `_toDelete/`. Enemies still spawn and are hittable; they no longer swing. Giving them attacks on the old `SWEEP` model would mean building it twice — they come back after `motion = PATH` |
 | Attack cooldowns | **ABSENT — placeholder in place** | — | `_hasSweepInFlight` rejects a second swing from the same attacker. Stops key-spam stacking overlapping blades, each with its own dedup set. `SkillService:isReady` exists and nothing calls it; this belongs in VALIDATE as a real recovery time |
 | HitVolume | TESTED | 7 | Defaults, validation, reach per shape |
 | TargetResolution | **VERIFIED for what it tests** | 9 | Five stages, dedup, caps, and a live swing checked by hand — **all against sphere hurtboxes**. The staging is proven; the target geometry it is fed is not |
@@ -154,12 +159,12 @@ act on in six months.
 - **No enemy has ever attacked.** The enemy-side path (`at = now`, telegraph as
   the compensation) has tests but no live run.
 - **Nothing persists.** DataService is a stub.
-- **Hurtboxes are a known-wrong placeholder.** One sphere per entity, and the
-  player's is ~2.5× too wide horizontally. The live swing table above is
-  geometrically correct *for the sphere it was given* — it does not show that
-  the sphere is the right shape. Per-part hurtboxes are required work, not a
-  refinement; `HitDetection.md` §7.1 has the argument, §7.2 the design, §7.4
-  the cost (four `Overlap` variants that do not exist).
+- **Hurtboxes are mid-rebuild, and the OLD shape is still what hits.** One
+  capsule per entity, the player's ~2.5× too wide horizontally. The live swing
+  table above is geometrically correct *for the capsule it was given* — it does
+  not show that the capsule is the right shape. The replacement is built and
+  drawn but not yet tested against — `NextSteps.md` items 1–4. This stays in
+  this list until resolution loops zones.
 
 ---
 
@@ -167,7 +172,10 @@ act on in six months.
 
 | Question | Why it is parked | What answers it |
 |---|---|---|
-| Is `GetNetworkPing()` a round trip or one way? | Localhost reads 0.0000, so the ratio is meaningless. `PING_TO_ROUND_TRIP` stays at 2, the over-rewinding guess | Run PingProbe (`ENABLED = true`) in a Team Test or published place |
+| ~~Does a server script see a client-animated limb move?~~ | **CLOSED 2026-08-21.** Yes — trailing by ~0.104s, which is `INTERPOLATION_CONSTANT` behaving exactly as specified. Measured by `LimbProbe`, since retired | — |
+| ~~Derive hurtboxes from part sizes, or hand-place them?~~ | **CLOSED 2026-08-22.** Both, per body. Players are typed in `HurtboxDefinitions` because they wear a stock rig; bosses get parts placed by eye and read at spawn | — |
+| Is `GetNetworkPing()` a round trip or one way? | The **unit** is settled (seconds, measured). The ratio is not, and is low-stakes: ~12ms against a 0.1s constant. `PING_TO_ROUND_TRIP` stays at 2, the over-rewinding guess | A playtest above ~200ms ping that feels wrong |
+| Does `MAX_ENTITY_SPEED = 120` need raising? | Nothing in the world moves near it. **A boss that flies faster gets silently culled from its own hit test** | The first fast boss. `NextSteps.md` |
 | Is `MAX_REWIND = 0.5` right? | Already 2× the shooter norm; no player data to tune against | Ping distribution from real sessions |
 | Does the broadphase need spatial partitioning? | ~100 entities is microseconds of linear scan | It appearing in a profile, or attached count passing ~500 |
 | Does single-target need a distance sort? | With `maxTargets = 1` and no client hint, the pick is arbitrary order | The first real single-target skill |
@@ -180,13 +188,12 @@ act on in six months.
 | Tool | State | Use |
 |---|---|---|
 | `diagnostics/SwingReport.luau` | Present, uncalled | Require it in CombatService and call `report(player, event, query, hits)` for a per-swing breakdown |
-| `diagnostics/PingProbe.server.luau` | Present, `ENABLED = false` | Turn on inside Team Test to settle the ping question |
+| `_toDelete/` at the repo root | **retired, outside `src/`** | `LimbProbe`, `PingProbe`, `SweepTrace`, `EnemyAttackDemo`. Rojo does not sync that folder, so none of it can run. Each answered its question and the answer is recorded elsewhere; git has them if any is wanted back |
 | `diagnostics/DummySpawner.luau` | Called from `Main.server.luau` | Ten anchored dummies. Delete when ZoneService spawns real encounters |
-| `diagnostics/HurtboxDebug.luau` | flag `DebugHurtboxes`, **on** | Draws every attached hurtbox as a cyan overlay, **welded to the body** so it cannot trail it. **Turn this on for every model-authoring session** — it is the only way to see whether a hitzone list actually covers a rig |
+| `diagnostics/HurtboxDebug.luau` | flag `DebugHurtboxes`, **on** | Draws every zone as a cyan capsule, **welded to its own limb** so it follows the pose and cannot trail the body. **Turn this on for every model-authoring session** — it is the only way to see whether a zone list actually covers a rig |
+| ↳ `DebugHurtboxLog` | **off** | Per-zone positions, and which limb each zone resolved to. `rel drift` non-zero while moving means a zone is tracking its limb; `ROOT (unbound)` means that limb name does not exist on this rig and it fell back |
 | ↳ `DebugHurtboxServerView` | **off** | Same overlay in amber, drawn from the **server's** copy and teleported instead of welded. The gap it opens behind your character is `2L + I` — the round trip rewind exists to undo. A measurement, not a shape check (HitDetection §7.11) |
 | `diagnostics/AttackDebug.luau` | flag `DebugHitboxes`, **on** | Draws the volume the server actually resolved, plus a red marker on everything it caught. Amber for your swings, red for incoming |
-| `diagnostics/SweepTrace.luau` | flags `DebugSweepTrace` / `DebugSweepPath`, **off** | Per-wedge table of blade position vs every hurtbox position, and the arc left standing as a ghost path |
-| `diagnostics/EnemyAttackDemo.luau` | flag `DebugEnemyAttacks`, **on** | Ten dummies swinging on a timer, 20 damage, 100 HP, pushed to the client |
 | `diagnostics/DebugConfig.luau` | — | **The switchboard.** Every flag above is a Workspace attribute, editable in the Properties panel **while the game runs** |
 
 **The two logs that default on are a pair:** `DebugAttackLog` (one line per
