@@ -64,6 +64,22 @@ local FLAGS = {
     -- with the numbers it was judged on.
     SwingReport = false,
 
+    -- Per-zone positions, printed periodically, in BOTH world space and
+    -- relative to the body's root.
+    --
+    -- The two columns answer two different questions and the difference is
+    -- the whole reason both are printed:
+    --
+    --   WORLD changes as you walk        -> the overlay is attached and riding
+    --                                       the body. If it does NOT change,
+    --                                       the weld is broken.
+    --   REL ROOT stays fixed             -> zones are anchored to the root,
+    --                                       which is the current design for
+    --                                       client-owned rigs (HitDetection
+    --                                       7.2a). Limbs animating do not move
+    --                                       them, and that is not a bug.
+    HurtboxLog = false,
+
 
     -- One line per wedge as it fires. The noisy one.
     SweepWedges = false,

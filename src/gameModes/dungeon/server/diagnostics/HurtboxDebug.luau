@@ -351,6 +351,96 @@ local function reposition(pieces, spatial, hurtbox)
     end
 end
 
+-- LOGGING ---------------------------------------------------------------
+--
+-- Exists to separate two complaints that look identical on screen and have
+-- completely different causes:
+--
+--   "the hurtbox does not move"        -> is WORLD position changing as the
+--                                         body walks? If not, the weld or the
+--                                         attach is broken. Real bug.
+--   "the hurtbox does not bend"        -> is REL ROOT changing as limbs
+--                                         animate? It is not supposed to.
+--                                         Zones hang off the ROOT for a
+--                                         client-owned rig, so a swinging arm
+--                                         moves the arm and not its zone.
+--                                         Working as designed -- HitDetection
+--                                         7.2a -- and the fix is a different
+--                                         piece of work, not a repair.
+--
+-- Printing both columns is what makes the distinction visible instead of
+-- arguable.
+
+local LOG_FLAG = "HurtboxLog"
+local LOG_SECONDS = 2.0
+
+HurtboxDebug._logAccumulator = 0
+HurtboxDebug._lastSeen = {}     -- entity -> { root = Vector3, rel = { Vector3 } }
+
+local function logEntity(entity, spatial, hurtbox)
+    local pose = spatial:getCFrame()
+    if not pose then
+        return
+    end
+
+    local id = tostring(entity.identity:getId())
+    local last = HurtboxDebug._lastSeen[entity]
+    local rootMoved = last and (pose.Position - last.root).Magnitude or 0
+
+    local humanoidState = "?"
+    local model = spatial.anchor and spatial.anchor.Parent
+    local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoidState = humanoid:GetState().Name
+    end
+
+    print(string.format(
+        "[HurtboxLog] %s  hurtbox=%s  state=%s",
+        id,
+        hurtbox and string.format("%d zones", hurtbox:zoneCount())
+            or "NONE -- falling back to the single capsule",
+        humanoidState))
+    print(string.format(
+        "    root world (%.1f, %.1f, %.1f)   moved %.2f studs since last block",
+        pose.Position.X, pose.Position.Y, pose.Position.Z, rootMoved))
+
+    local count = hurtbox and hurtbox:zoneCount() or 1
+    local rel = {}
+
+    for index = 1, count do
+        local capA, capB, radius
+        local label
+        if hurtbox then
+            capA, capB, radius = hurtbox:endpoints(index, pose)
+            label = hurtbox:zoneName(index)
+        else
+            capA, capB = spatial:endpoints(pose)
+            radius, label = spatial.radius, "Body"
+        end
+
+        -- The capsule's centre is the honest single number for "where is this
+        -- zone" -- an endpoint moves when the zone merely rotates.
+        local centre = (capA + capB) * 0.5
+        local relative = pose:Inverse() * centre
+        rel[index] = relative
+
+        local drift = 0
+        if last and last.rel[index] then
+            drift = (relative - last.rel[index]).Magnitude
+        end
+
+        print(string.format(
+            "    %-10s world (%6.1f,%6.1f,%6.1f)   rel root (%5.2f,%5.2f,%5.2f)"
+                .. "   r=%.2f   rel drift %.3f",
+            label,
+            centre.X, centre.Y, centre.Z,
+            relative.X, relative.Y, relative.Z,
+            radius, drift))
+    end
+
+    HurtboxDebug._lastSeen[entity] = { root = pose.Position, rel = rel }
+end
+
 local function refresh(entity, serverView: boolean)
     local spatial = entity.spatial
     if not spatial or not spatial:isAnchored() then
@@ -402,6 +492,24 @@ function HurtboxDebug.start()
     local interval = 1 / REDRAW_HZ
 
     HurtboxDebug._connection = RunService.Heartbeat:Connect(function(deltaTime)
+        -- The LOG runs off its own accumulator and its own flag, deliberately
+        -- ahead of the drawing gate. It has to be readable with the overlay
+        -- turned OFF -- "nothing is drawn" and "nothing is attached" look
+        -- identical in the viewport, and the log is what tells them apart.
+        if DebugConfig.get(LOG_FLAG) then
+            HurtboxDebug._logAccumulator += deltaTime
+            if HurtboxDebug._logAccumulator >= LOG_SECONDS then
+                HurtboxDebug._logAccumulator = 0
+                print("")
+                SpatialService:forEachAttached(function(entity)
+                    local spatial = entity.spatial
+                    if spatial and spatial:isAnchored() then
+                        logEntity(entity, spatial, entity.hurtbox)
+                    end
+                end)
+            end
+        end
+
         if not DebugConfig.get(FLAG) then
             return
         end
@@ -441,6 +549,8 @@ function HurtboxDebug.start()
     -- still tested the single capsule. A diagnostic that overstates what it is
     -- showing is worse than no diagnostic, and this one is being read
     -- specifically to decide whether the zone numbers are any good.
+    print(string.format("    Debug%s logs every zone position, world AND rel-root -- "
+        .. "that pair is what separates \"it does not move\" from \"it does not bend\".", LOG_FLAG))
     print("    NOTE: resolution still tests the OLD single capsule. These zones "
         .. "are drawn to be CHECKED, not to be hit with -- HitDetection 0.5.")
     print(string.format(
