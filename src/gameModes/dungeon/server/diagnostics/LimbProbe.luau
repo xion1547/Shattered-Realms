@@ -1,86 +1,70 @@
 -- src/gameModes/dungeon/server/diagnostics/LimbProbe.luau
 --
--- TEMPORARY. Answers exactly one question and should be deleted once it has:
+-- TEMPORARY. Answers one question, then gets deleted:
 --
---     Does a SERVER script see a limb's CFrame change while an animation
---     plays on that rig?
+--     When the server reconstructs where a limb WAS at a past moment, how far
+--     off is that from where the client actually saw it?
 --
--- That question decides whether a hitbox can be a real welded part whose
--- position the server records each tick (`motion = LIVE`), or whether a
--- player's hitbox path has to be recorded at dev time instead
--- (`motion = BAKED`). See HitDetection.md Part 9.
---
--- ============================================================================
--- THE MEASUREMENT, AND THE FALSE POSITIVE IT EXISTS TO AVOID
--- ============================================================================
---
--- The obvious version of this test logs a hand part's WORLD CFrame and watches
--- the numbers change. They always change. Walking moves the whole body, so a
--- world reading varies constantly whether or not a single joint ever bent, and
--- it would report success on a rig that is standing perfectly rigid.
---
--- The reading that means something is the limb RELATIVE TO THE ROOT:
---
---     rel = root.CFrame:Inverse() * limb.CFrame
---
--- That is invariant under walking, turning, falling and being teleported. It
--- changes if and only if the limb moved with respect to the body -- which is
--- the definition of the thing being asked about.
+-- Answer in studs. That number decides whether a player's hitbox can be a
+-- welded part the server records each tick (`motion = LIVE`), or has to be a
+-- path recorded at dev time (`motion = BAKED`). HitDetection.md Part 9.
 --
 -- ============================================================================
--- WHY THERE IS A CONTROL, AND WHY IT IS NOT OPTIONAL
+-- THE THREE VERSIONS, AND WHY EACH ONE WAS WRONG
 -- ============================================================================
 --
--- Probe B builds a two-part rig from code and drives its joint from THIS
--- script, so the server is unambiguously the thing moving it. Its purpose is
--- not to discover anything -- the answer is known -- it is to prove the
--- instrument works.
+-- v1  Measured RANGE OF MOTION on each side over a 3s window and subtracted.
+--     Useless: the windows covered different seconds of a non-repeatable
+--     input (walking), so the difference measured the walking.
 --
---     B reports MOVING, A reports STATIC   -> A's answer is real
---     B reports STATIC                     -> THE MEASUREMENT IS BROKEN.
---                                             Report nothing. Fix this file.
+-- v2  Client reports its pose stamped with a server time; server rewinds its
+--     own history to that stamp and subtracts. Correct in shape, and it
+--     produced ~0.9 studs of error.
 --
--- A test with no control cannot distinguish "the limb did not move" from "I
--- measured the wrong thing", and those two produce identical output.
+--     STILL NOT CONCLUSIVE, because it assumed the two clocks agree. If the
+--     client's estimate of server time is off by 50ms, and an arm covers two
+--     studs in a third of a second, that mismatch alone manufactures ~0.33
+--     studs of error out of a perfectly healthy system.
 --
--- ============================================================================
--- WHAT EACH PROBE COVERS
--- ============================================================================
+-- v3  (this one) Does not trust the stamp. For every client report it tries a
+--     RANGE of moments either side of the stamp and finds which one matches
+--     best.
 --
---   A  a player's own character        client plays the animation,
---      (default walk/idle animations)  client owns the rig.  THE REAL CASE.
+--         best match at offset ~0     -> the clocks agree. The leftover error
+--                                        is real divergence.
+--         best match at offset 0.06   -> 60ms of skew was inflating v2, and
+--                                        the error at the best offset is the
+--                                        true fidelity.
 --
---   B  a rig built here, joint driven  server plays it, server owns it.
---      by a sine wave from the server  CONTROL + the boss case.
---
---   C  a part WELDED to B's moving     does a weld carry a joint-driven
---      limb                            part, as a hitbox proxy would?
---
--- Probe A needs no uploaded animation. A player character is already running
--- Roblox's default animations, on the client, on a client-owned rig -- which
--- is precisely the configuration in question, available for free.
+--     This is ordinary signal alignment: slide one trace against the other
+--     until they line up, and read off both the shift and the residual.
 --
 -- ============================================================================
--- THE TWO MARKERS
+-- THE DENOMINATOR, WHICH v2 OMITTED AND WHICH MAKES THE NUMBER READABLE
 -- ============================================================================
 --
--- Numbers are the evidence; the markers are so the answer is visible without
--- reading any. Two spheres ride your right hand:
+-- "0.2 studs of error" means nothing alone. Against a limb that barely moved
+-- it is terrible; against a limb that travelled three studs it is excellent.
+-- So the report also carries how far the limb actually moved in the same
+-- window, and the error as a percentage of it.
 --
---   GREEN   welded to the hand. Rides YOUR client's simulation.
---   RED     anchored, teleported each frame to where the SERVER thinks
---           your hand is.
+-- ============================================================================
+-- THE CONTROL
+-- ============================================================================
 --
--- Together   -> the server sees the animation.
--- Red frozen at the rest pose while green swings -> it does not.
--- Red trailing green by a fixed lag -> it does, late, and the lag is the
---           thing to measure next.
+-- Probe B builds a rig here and drives its joint from this script, purely to
+-- prove the measurement works. If B reads STATIC, this file is broken and
+-- nothing else it prints means anything.
 --
--- Deliberately NOT welded for the red one: teleporting from the server's own
--- reading is the entire point, and welding it would make it follow the client
--- and quietly show agreement that was never tested.
+-- CONFIRMED: the client sees B as STATIC, and that is CORRECT -- a `Transform`
+-- written by a script does not replicate in either direction, which is why NPC
+-- animations must go through an Animator. So this control does NOT model a
+-- server-animated boss; that case needs one real uploaded animation and stays
+-- untested. Stated plainly because a control that silently covers less than it
+-- appears to is worse than no control.
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local DebugConfig = require(script.Parent:WaitForChild("DebugConfig"))
@@ -88,72 +72,39 @@ local DebugConfig = require(script.Parent:WaitForChild("DebugConfig"))
 local LimbProbe = {}
 
 local FLAG = "LimbProbe"
-
--- How often a summary block is printed. Long enough that a walk cycle
--- completes several times inside one window, short enough to iterate.
+local REMOTE_NAME = "LimbProbeRemote"
 local REPORT_SECONDS = 3.0
+local HISTORY_SECONDS = 2.0
 
--- Studs of variation, relative to the root, below which a reading is called
--- noise rather than motion. Physics jitter and float error live well under
--- this; a bending elbow is far above it. The RAW range is always printed
--- alongside the verdict, so this threshold informs the label and never hides
--- the number it was derived from.
-local MOVEMENT_EPSILON = 0.05
+-- OFFSET SEARCH ----------------------------------------------------------
+--
+-- How far either side of the client's stamp to look, and how finely.
+--
+-- NOT WIDER THAN THIS, deliberately. Walking is PERIODIC -- an arm returns to
+-- roughly the same place about twice a second. Search far enough and the
+-- aligner will happily lock onto the NEXT swing and report a confident,
+-- meaningless offset. A fifth of a second is comfortably inside one cycle.
+local SEARCH_SECONDS = 0.20
+local SEARCH_STEP = 0.005
 
--- Probe B's joint is driven through this many radians, peak to peak. Chosen
--- large enough to be unmistakable both on screen and in the numbers.
+-- Below this, a best-offset is treated as "the clocks agree" rather than a
+-- finding. Two frames.
+local SKEW_NOISE_FLOOR = 0.033
+
+-- Verdict thresholds in studs. OPINIONS, not measurements -- the raw figures
+-- are always printed beside them. For scale: BASIC_SWING is a capsule 6.5
+-- studs long and 0.5 thick.
+local FAITHFUL_STUDS = 0.15
+local DEGRADED_STUDS = 0.50
+
 local CONTROL_SWING_RADIANS = math.rad(70)
 local CONTROL_PERIOD = 2.0
 
-local MARKER_SIZE = Vector3.new(0.6, 0.6, 0.6)
-local CLIENT_MARKER_COLOR = Color3.fromRGB(0, 255, 120)   -- welded, rides the client
-local SERVER_MARKER_COLOR = Color3.fromRGB(255, 60, 60)   -- the server's belief
-
--- RANGE ACCUMULATOR ------------------------------------------------------
---
--- Min and max per axis rather than a running average: an average over a
--- symmetric swing is the rest pose, which would read as "not moving" for a
--- limb travelling two studs each way. The RANGE is what distinguishes motion
--- from stillness, and the mean actively hides it.
-
-local function newRange()
-    return {
-        count = 0,
-        minX = math.huge, maxX = -math.huge,
-        minY = math.huge, maxY = -math.huge,
-        minZ = math.huge, maxZ = -math.huge,
-    }
-end
-
-local function feed(range, v: Vector3)
-    range.count += 1
-    range.minX = math.min(range.minX, v.X); range.maxX = math.max(range.maxX, v.X)
-    range.minY = math.min(range.minY, v.Y); range.maxY = math.max(range.maxY, v.Y)
-    range.minZ = math.min(range.minZ, v.Z); range.maxZ = math.max(range.maxZ, v.Z)
-end
-
-local function spans(range): (number, number, number)
-    if range.count == 0 then
-        return 0, 0, 0
-    end
-    return range.maxX - range.minX, range.maxY - range.minY, range.maxZ - range.minZ
-end
-
-local function verdict(range): string
-    if range.count == 0 then
-        return "NO DATA"
-    end
-    local dx, dy, dz = spans(range)
-    local largest = math.max(dx, dy, dz)
-    return largest >= MOVEMENT_EPSILON and "MOVING" or "STATIC"
-end
-
-local function describe(label: string, range): string
-    local dx, dy, dz = spans(range)
-    return string.format(
-        "    %-22s range  X %6.3f  Y %6.3f  Z %6.3f   ->  %s",
-        label, dx, dy, dz, verdict(range))
-end
+-- Bigger than v2's 0.6. The whole point is seeing the gap, and a gap of 0.9
+-- studs between two half-stud balls at arm's length is easy to miss.
+local MARKER_SIZE = Vector3.new(1.1, 1.1, 1.1)
+local CLIENT_MARKER_COLOR = Color3.fromRGB(0, 255, 120)
+local SERVER_MARKER_COLOR = Color3.fromRGB(255, 40, 40)
 
 -- HELPERS ----------------------------------------------------------------
 
@@ -161,14 +112,9 @@ local function relativeTo(root: BasePart, part: BasePart): CFrame
     return root.CFrame:Inverse() * part.CFrame
 end
 
--- Finds the joint parented to `part`, accepting EITHER kind.
---
--- Roblox's Avatar Joint Upgrade (live 2026-01-26) replaces Motor6D with
--- AnimationConstraint on R15 characters when `StarterPlayer.AvatarJointUpgrade`
--- is Enabled, and it is scheduled to become the default. Code that asks only
--- `:IsA("Motor6D")` finds nothing on an upgraded rig -- and would report a
--- missing joint as though it were a finding. Both classes carry a `Transform`,
--- so everything below reads the same either way.
+-- Accepts either joint class. This place has Avatar Joint Upgrade enabled --
+-- v1 confirmed `RightWrist (AnimationConstraint)` -- and asking only for
+-- Motor6D would report a missing joint as though that were a result.
 local function findJoint(part: BasePart): Instance?
     for _, child in ipairs(part:GetChildren()) do
         if child:IsA("Motor6D") or child:IsA("AnimationConstraint") then
@@ -178,19 +124,6 @@ local function findJoint(part: BasePart): Instance?
     return nil
 end
 
-local function isIdentity(cf: CFrame): boolean
-    local x, y, z = cf.Position.X, cf.Position.Y, cf.Position.Z
-    if math.abs(x) > 1e-4 or math.abs(y) > 1e-4 or math.abs(z) > 1e-4 then
-        return false
-    end
-    -- LookVector is enough to catch a rotation; a joint that rotated without
-    -- translating is the normal case for a bending elbow and must not read as
-    -- identity.
-    local look = cf.LookVector
-    return math.abs(look.X) < 1e-4 and math.abs(look.Y) < 1e-4
-        and math.abs(look.Z + 1) < 1e-4
-end
-
 local function makeMarker(name: string, color: Color3, anchored: boolean): Part
     local part = Instance.new("Part")
     part.Name = name
@@ -198,7 +131,7 @@ local function makeMarker(name: string, color: Color3, anchored: boolean): Part
     part.Size = MARKER_SIZE
     part.Color = color
     part.Material = Enum.Material.Neon
-    part.Transparency = 0.35
+    part.Transparency = 0.2
     part.CanCollide = false
     part.CanQuery = false
     part.CanTouch = false
@@ -207,13 +140,32 @@ local function makeMarker(name: string, color: Color3, anchored: boolean): Part
     return part
 end
 
--- PROBE B — THE CONTROL --------------------------------------------------
+local function limbOf(character: Model): BasePart?
+    return character:FindFirstChild("RightHand")
+        or character:FindFirstChild("Right Arm")
+end
+
+-- ACCUMULATOR ------------------------------------------------------------
 --
--- A two-part rig assembled here so nothing about it is inherited or assumed:
--- an anchored root, an unanchored limb, one joint between them, and a proxy
--- part welded to the limb. This script writes the joint's Transform directly,
--- so if the server cannot observe THIS moving, it cannot observe anything and
--- no other reading in this file means anything.
+-- Mean AND max, never mean alone. A limb that tracks well for most of a cycle
+-- and is a stud out at the peak has a flattering mean and a disqualifying max
+-- -- and the peak of the swing is exactly when an attack lands.
+
+local function newAcc()
+    return { count = 0, sum = 0, max = 0 }
+end
+
+local function feed(acc, value: number)
+    acc.count += 1
+    acc.sum += value
+    acc.max = math.max(acc.max, value)
+end
+
+local function mean(acc): number
+    return acc.count > 0 and (acc.sum / acc.count) or 0
+end
+
+-- PROBE B — THE CONTROL --------------------------------------------------
 
 local control = nil
 
@@ -239,9 +191,6 @@ local function buildControl()
     limb.Color = Color3.fromRGB(120, 160, 255)
     limb.Parent = model
 
-    -- Motor6D rather than AnimationConstraint: this rig is ours, is not an
-    -- avatar, and Motor6D remains correct for non-avatar mechanical rigs. The
-    -- reader for it accepts both anyway.
     local motor = Instance.new("Motor6D")
     motor.Name = "ControlJoint"
     motor.Part0 = root
@@ -250,26 +199,11 @@ local function buildControl()
     motor.C1 = CFrame.new(0, -1.5, 0)
     motor.Parent = root
 
-    -- PROBE C. A hitbox proxy is exactly this: a part welded to something the
-    -- animation moves. If a weld does not carry it, the whole `motion = LIVE`
-    -- idea fails here rather than in production.
-    local proxy = makeMarker("ControlProxy", Color3.fromRGB(255, 200, 0), false)
-    proxy.Size = Vector3.new(1.2, 1.2, 1.2)
-    proxy.Parent = model
-
     model.Parent = workspace
-
-    -- CFrame BEFORE the weld, or the weld records the wrong offset and pins
-    -- the proxy wherever it happened to spawn.
     limb.CFrame = root.CFrame * CFrame.new(0, 2.5, 0)
-    proxy.CFrame = limb.CFrame * CFrame.new(0, 1.5, 0)
 
-    local weld = Instance.new("WeldConstraint")
-    weld.Part0 = limb
-    weld.Part1 = proxy
-    weld.Parent = proxy
-
-    return { model = model, root = root, limb = limb, motor = motor, proxy = proxy }
+    return { model = model, root = root, limb = limb, motor = motor,
+             moved = 0, samples = 0, base = nil }
 end
 
 local function driveControl(elapsed: number)
@@ -282,36 +216,23 @@ end
 
 -- PROBE A — A PLAYER'S CHARACTER -----------------------------------------
 
-local watched = {}    -- player -> state
-
-local function limbOf(character: Model): BasePart?
-    -- R15. RightHand is the furthest point of the arm chain and therefore the
-    -- most sensitive to any joint in it bending -- an error at the shoulder is
-    -- amplified all the way down, which is what we want to detect.
-    return character:FindFirstChild("RightHand")
-        or character:FindFirstChild("Right Arm")     -- R6 fallback
-end
+local watched = {}
+local remote = nil
 
 local function attachPlayer(player: Player, character: Model)
     local root = character:WaitForChild("HumanoidRootPart", 10)
     local humanoid = character:WaitForChild("Humanoid", 10)
     if not root or not humanoid then
-        warn(string.format("[LimbProbe] %s: no root or humanoid, skipping", player.Name))
+        warn(string.format("[LimbProbe] %s: no root or humanoid", player.Name))
         return
     end
 
     local limb = limbOf(character)
     if not limb then
-        warn(string.format(
-            "[LimbProbe] %s: no RightHand or Right Arm -- unexpected rig, skipping",
-            player.Name))
+        warn(string.format("[LimbProbe] %s: no RightHand -- unexpected rig", player.Name))
         return
     end
 
-    -- Welded, not teleported. A weld puts it in the character's own physics
-    -- assembly, so it is simulated by whoever owns the character -- the client
-    -- -- and therefore shows the CLIENT's truth. Teleporting it from here
-    -- would show the server's, which is the other marker's job.
     local clientMarker = makeMarker("LimbProbe_Client", CLIENT_MARKER_COLOR, false)
     clientMarker.CFrame = limb.CFrame
     clientMarker.Parent = character
@@ -331,30 +252,24 @@ local function attachPlayer(player: Player, character: Model)
         humanoid = humanoid,
         joint = findJoint(limb),
         serverMarker = serverMarker,
-        limbRange = newRange(),
-        markerRange = newRange(),
-        transformIdentity = 0,
-        transformTotal = 0,
-        states = {},
+
+        times = {},
+        poses = {},
+
+        naive = newAcc(),        -- error at the client's stamp, no realignment
+        aligned = newAcc(),      -- error at the best-matching offset
+        offsets = {},            -- every best offset found, for the median
+        travel = newAcc(),       -- how far the limb actually moved. The denominator
+        lastPose = nil,
+        stale = 0,
+        expected = 0,
     }
 
-    local jointDesc = "NONE FOUND"
     local joint = watched[player].joint
-    if joint then
-        jointDesc = string.format("%s (%s)", joint.Name, joint.ClassName)
-    end
-
     print(string.format(
-        "[LimbProbe] watching %s | limb=%s | joint=%s | network owner=%s",
-        player.Name, limb.Name, jointDesc,
-        (function()
-            -- A part with no network owner is server-simulated. A character
-            -- should report its own player; anything else is worth seeing,
-            -- because ownership is the property that decides who can lie.
-            local ok, owner = pcall(function() return root:GetNetworkOwner() end)
-            if not ok then return "unreadable" end
-            return owner and owner.Name or "SERVER"
-        end)()))
+        "[LimbProbe] watching %s | limb=%s | joint=%s",
+        player.Name, limb.Name,
+        joint and string.format("%s (%s)", joint.Name, joint.ClassName) or "NONE FOUND"))
 end
 
 local function releasePlayer(player: Player)
@@ -368,9 +283,72 @@ local function releasePlayer(player: Player)
     watched[player] = nil
 end
 
+local function poseAt(state, t: number): CFrame?
+    local times, poses = state.times, state.poses
+    local n = #times
+    if n == 0 or t <= times[1] then
+        return nil
+    end
+    if t >= times[n] then
+        return poses[n]
+    end
+
+    local lo, hi = 1, n
+    while lo < hi do
+        local mid = math.floor((lo + hi + 1) / 2)
+        if times[mid] <= t then
+            lo = mid
+        else
+            hi = mid - 1
+        end
+    end
+
+    local ta, tb = times[lo], times[lo + 1]
+    local span = tb - ta
+    if span <= 0 then
+        return poses[lo]
+    end
+    return poses[lo]:Lerp(poses[lo + 1], (t - ta) / span)
+end
+
+local function onClientReport(player: Player, t: number, clientPose: CFrame)
+    local state = watched[player]
+    if not state or typeof(clientPose) ~= "CFrame" or type(t) ~= "number" then
+        return
+    end
+
+    local atStamp = poseAt(state, t)
+    if not atStamp then
+        state.stale += 1
+        return
+    end
+    feed(state.naive, (atStamp.Position - clientPose.Position).Magnitude)
+
+    -- THE ALIGNMENT SEARCH. Slide the lookup either side of the stamp and keep
+    -- whichever moment the server's own history matches the client's reading
+    -- best. The residual at that moment is the fidelity; the shift is the skew.
+    local bestError, bestOffset = math.huge, 0
+    local offset = -SEARCH_SECONDS
+    while offset <= SEARCH_SECONDS do
+        local candidate = poseAt(state, t + offset)
+        if candidate then
+            local err = (candidate.Position - clientPose.Position).Magnitude
+            if err < bestError then
+                bestError, bestOffset = err, offset
+            end
+        end
+        offset += SEARCH_STEP
+    end
+
+    if bestError < math.huge then
+        feed(state.aligned, bestError)
+        table.insert(state.offsets, bestOffset)
+    end
+end
+
 -- SAMPLING ---------------------------------------------------------------
 
-local function sample()
+local function sample(now: number)
     for player, state in pairs(watched) do
         local character = state.character
         if not character or not character.Parent
@@ -380,136 +358,133 @@ local function sample()
         end
 
         local rel = relativeTo(state.root, state.limb)
-        feed(state.limbRange, rel.Position)
 
-        -- The server's belief, drawn. Uses the server's own reading of the
-        -- limb, never the client's.
+        -- The denominator: total path length the limb travelled, as the SERVER
+        -- saw it. Compared against the error, it turns "0.2 studs" into "10% of
+        -- the motion", which is the form the number can actually be judged in.
+        if state.lastPose then
+            feed(state.travel, (rel.Position - state.lastPose.Position).Magnitude)
+        end
+        state.lastPose = rel
+
+        table.insert(state.times, now)
+        table.insert(state.poses, rel)
+        while #state.times > 1 and (now - state.times[1]) > HISTORY_SECONDS do
+            table.remove(state.times, 1)
+            table.remove(state.poses, 1)
+        end
+
         state.serverMarker.CFrame = state.limb.CFrame
-
-        local marker = character:FindFirstChild("LimbProbe_Client")
-        if marker and marker:IsA("BasePart") then
-            feed(state.markerRange, relativeTo(state.root, marker).Position)
-        end
-
-        if state.joint then
-            state.transformTotal += 1
-            if isIdentity(state.joint.Transform) then
-                state.transformIdentity += 1
-            end
-        end
-
-        local humanoidState = state.humanoid and state.humanoid:GetState().Name or "?"
-        state.states[humanoidState] = (state.states[humanoidState] or 0) + 1
     end
 
     if control and control.limb.Parent then
-        control.limbRange = control.limbRange or newRange()
-        control.proxyRange = control.proxyRange or newRange()
-        feed(control.limbRange, relativeTo(control.root, control.limb).Position)
-        feed(control.proxyRange, relativeTo(control.root, control.proxy).Position)
+        local rel = relativeTo(control.root, control.limb)
+        control.base = control.base or rel.Position
+        control.moved = math.max(control.moved, (rel.Position - control.base).Magnitude)
+        control.samples += 1
     end
 end
 
 -- REPORTING --------------------------------------------------------------
 
-local function playingTrackCount(character: Model): (number, string)
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-    if not animator then
-        return -1, "no Animator"
+local function median(values): number
+    if #values == 0 then
+        return 0
     end
-
-    local ok, tracks = pcall(function()
-        return animator:GetPlayingAnimationTracks()
-    end)
-    if not ok or type(tracks) ~= "table" then
-        return -1, "unreadable"
-    end
-
-    local names = {}
-    for _, track in ipairs(tracks) do
-        table.insert(names, track.Name)
-    end
-    return #tracks, #names > 0 and table.concat(names, ", ") or "none"
+    local sorted = table.clone(values)
+    table.sort(sorted)
+    return sorted[math.ceil(#sorted / 2)]
 end
 
-local function dominantState(states): string
-    local best, bestCount = "?", -1
-    for name, count in pairs(states) do
-        if count > bestCount then
-            best, bestCount = name, count
-        end
+local function verdictFor(studs: number): string
+    if studs < FAITHFUL_STUDS then
+        return "FAITHFUL   -- LIVE works for players"
+    elseif studs < DEGRADED_STUDS then
+        return "DEGRADED   -- judgement call"
     end
-    return best
+    return "UNUSABLE   -- players need BAKED"
 end
 
 local function report(window: number)
     print("")
-    print(string.format(
-        "======== LimbProbe  %.1fs window ================================",
-        window))
+    print("======== LimbProbe v3 =========================================")
 
-    -- CONTROL FIRST, DELIBERATELY. It is the thing that licenses reading
-    -- anything below it, so it should be the first thing seen and the first
-    -- thing checked when a result looks surprising.
-    if control and control.limbRange then
-        print("  [B] CONTROL  server-built rig, joint driven by this script")
-        print(describe("limb rel root", control.limbRange))
-        print("  [C] PROXY    part WELDED to that limb")
-        print(describe("proxy rel root", control.proxyRange))
-        if verdict(control.limbRange) ~= "MOVING" then
-            print("    *** CONTROL IS NOT MOVING. The measurement is broken.")
-            print("    *** Every reading below is meaningless. Do not report it.")
-        end
-        control.limbRange = newRange()
-        control.proxyRange = newRange()
+    if control then
+        local ok = control.moved >= 0.05
+        print(string.format("  [B] CONTROL  moved %.3f studs  ->  %s",
+            control.moved, ok and "INSTRUMENT OK" or "*** BROKEN, IGNORE EVERYTHING BELOW"))
+        control.moved, control.samples, control.base = 0, 0, nil
     else
         print("  [B] CONTROL  NOT BUILT -- nothing below can be trusted")
     end
 
-    local any = false
     for player, state in pairs(watched) do
-        any = true
-        local trackCount, trackNames = playingTrackCount(state.character)
-
         print("")
-        print(string.format(
-            "  [A] PLAYER  %s   client-owned rig, client-played animations",
-            player.Name))
-        print(string.format(
-            "    samples %d   humanoid mostly %s   tracks playing %s (%s)",
-            state.limbRange.count, dominantState(state.states),
-            trackCount >= 0 and tostring(trackCount) or "?", trackNames))
-        print(describe("limb rel root", state.limbRange))
-        print(describe("welded marker rel root", state.markerRange))
+        print(string.format("  [A] %s", player.Name))
 
-        if state.joint and state.transformTotal > 0 then
-            print(string.format(
-                "    %-22s identity on %d/%d samples   ->  %s",
-                "joint.Transform",
-                state.transformIdentity, state.transformTotal,
-                state.transformIdentity == state.transformTotal
-                    and "NEVER WRITTEN (server side)" or "WRITTEN"))
+        if state.aligned.count == 0 then
+            print("      no usable client reports -- is the client half running?")
         else
-            print("    joint.Transform        no joint found on the limb")
+            local travelled = state.travel.sum
+            local naiveMean, alignedMean = mean(state.naive), mean(state.aligned)
+            local skew = median(state.offsets)
+
+            print(string.format(
+                "      %d reports compared   limb travelled %.2f studs this window",
+                state.aligned.count, travelled))
+            print(string.format(
+                "      at the client's stamp   mean %6.3f   max %6.3f studs",
+                naiveMean, state.naive.max))
+            print(string.format(
+                "      best alignment          mean %6.3f   max %6.3f studs   at %+.3fs",
+                alignedMean, state.aligned.max, skew))
+
+            if math.abs(skew) >= SKEW_NOISE_FLOOR then
+                print(string.format(
+                    "      ->  CLOCK SKEW of %.0fms was inflating the naive figure.",
+                    skew * 1000))
+                print(string.format(
+                    "          The real error is %.3f studs, not %.3f.",
+                    alignedMean, naiveMean))
+            else
+                print("      ->  No meaningful skew. The naive figure was already honest.")
+            end
+
+            if math.abs(skew) >= SEARCH_SECONDS - SEARCH_STEP then
+                print("      ->  *** best offset is at the edge of the search range.")
+                print("          The true offset is outside it; widen SEARCH_SECONDS.")
+            end
+
+            if travelled > 0.01 then
+                print(string.format(
+                    "      error is %.0f%% of how far the limb actually moved",
+                    (alignedMean / travelled) * 100))
+            end
+
+            print(string.format("      VERDICT  %.3f studs  ->  %s",
+                alignedMean, verdictFor(alignedMean)))
+
+            if state.stale > 0 then
+                print(string.format("      (%d report(s) older than history, dropped)",
+                    state.stale))
+            end
         end
 
-        state.limbRange = newRange()
-        state.markerRange = newRange()
-        state.transformIdentity, state.transformTotal = 0, 0
-        state.states = {}
+        state.naive, state.aligned, state.travel = newAcc(), newAcc(), newAcc()
+        state.offsets = {}
+        state.stale = 0
     end
 
-    if not any then
+    if next(watched) == nil then
         print("")
-        print("  [A] PLAYER   nobody being watched -- join, or respawn")
+        print("  [A] nobody watched -- join or respawn")
     end
 
-    print("  ---------------------------------------------------------------")
-    print("  Walk around, jump, and stand still for part of a window.")
-    print("  Watch the two spheres on your right hand:")
-    print("    GREEN welded (your client)   RED teleported (the server's belief)")
-    print("================================================================")
+    print("  -------------------------------------------------------------")
+    print("  Give each a FULL window: stand still, walk straight, jump.")
+    print("  Two balls sit on your right hand -- GREEN is yours, RED is the")
+    print("  server's belief. The gap between them is this number, visible.")
+    print("===============================================================")
 end
 
 -- LIFECYCLE --------------------------------------------------------------
@@ -527,9 +502,15 @@ function LimbProbe.start()
     end
     running = true
 
+    -- Its own remote, created and destroyed with the probe. Deliberately not
+    -- routed through EventTape: throwaway diagnostic traffic has no business in
+    -- the ordered, validated, rate-limited path real gameplay uses.
+    remote = Instance.new("RemoteEvent")
+    remote.Name = REMOTE_NAME
+    remote.Parent = ReplicatedStorage
+    table.insert(connections, remote.OnServerEvent:Connect(onClientReport))
+
     control = buildControl()
-    control.limbRange = newRange()
-    control.proxyRange = newRange()
 
     local function bind(player: Player)
         if player.Character then
@@ -556,7 +537,7 @@ function LimbProbe.start()
         sinceReport += dt
 
         driveControl(elapsed)
-        sample()
+        sample(workspace:GetServerTimeNow())
 
         if sinceReport >= REPORT_SECONDS then
             report(sinceReport)
@@ -564,8 +545,7 @@ function LimbProbe.start()
         end
     end))
 
-    print("[LimbProbe] started. Control rig at (0, 6, -18). "
-        .. "First report in " .. REPORT_SECONDS .. "s.")
+    print("[LimbProbe v3] started -- now separates clock skew from real error.")
 end
 
 function LimbProbe.stop()
@@ -574,7 +554,6 @@ function LimbProbe.stop()
         connection:Disconnect()
     end
     table.clear(connections)
-
     for player in pairs(watched) do
         releasePlayer(player)
     end
@@ -582,6 +561,10 @@ function LimbProbe.stop()
         control.model:Destroy()
     end
     control = nil
+    if remote then
+        remote:Destroy()
+        remote = nil
+    end
 end
 
 return LimbProbe
