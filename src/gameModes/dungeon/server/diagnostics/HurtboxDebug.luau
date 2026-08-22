@@ -279,22 +279,37 @@ local function build(entity, spatial, serverView: boolean)
     for index = 1, count do
         local capA, capB, radius
 
+        -- EACH ZONE IS WELDED TO ITS OWN LIMB, not all of them to the root,
+        -- and that is the whole difference between an overlay that follows the
+        -- pose and a mannequin riding the body. An arm capsule welded to
+        -- `LeftUpperArm` goes up when the arm goes up, for free, with nothing
+        -- writing a CFrame -- the same weld trick that stopped the overlay
+        -- trailing the player in the first place, applied per zone.
+        local zoneAnchor = anchor
+
         if hurtbox then
-            capA, capB, radius = hurtbox:endpoints(index, pose)
+            local bound = hurtbox:anchorFor(index)
+            if bound and bound.Parent then
+                zoneAnchor = bound
+            end
+
+            -- Endpoints come from the LIMB's pose, so the drawing matches
+            -- where the zone actually is rather than where the root is.
+            capA, capB, radius = hurtbox:endpoints(index, zoneAnchor.CFrame)
         else
             capA, capB = spatial:endpoints(pose)
             radius = spatial.radius
         end
 
         -- The zone's NAME goes in the part name, not just its index. When a
-        -- capsule is in the wrong place, "ArmLeft is too far out" is a sentence
-        -- you can act on; "zone 3" means opening this file to find out which
-        -- one that is.
+        -- capsule is in the wrong place, "ArmLowerL is too long" is a sentence
+        -- you can act on; "zone 4" means opening a file to find out which one
+        -- that is.
         local label = hurtbox and hurtbox:zoneName(index) or "Body"
         local a, b, shaft = drawCapsule(
-            string.format("HB_%s_%s", id, label), capA, capB, radius, serverView, anchor)
+            string.format("HB_%s_%s", id, label), capA, capB, radius, serverView, zoneAnchor)
 
-        pieces.zones[index] = { capA = a, capB = b, shaft = shaft }
+        pieces.zones[index] = { capA = a, capB = b, shaft = shaft, anchor = zoneAnchor }
         table.insert(pieces.all, a)
         table.insert(pieces.all, b)
         if shaft then
@@ -336,7 +351,12 @@ local function reposition(pieces, spatial, hurtbox)
     for index, zone in ipairs(pieces.zones) do
         local capA, capB
         if hurtbox then
-            capA, capB = hurtbox:endpoints(index, pose)
+            -- The limb's live pose, matching what build() drew from. Reading
+            -- the root here instead would make ServerView disagree with the
+            -- welded mode about where a zone is, which would look like a
+            -- latency finding and be a bug in this file.
+            local zonePose = (zone.anchor and zone.anchor.Parent and zone.anchor.CFrame) or pose
+            capA, capB = hurtbox:endpoints(index, zonePose)
         else
             capA, capB = spatial:endpoints(pose)
         end
@@ -409,13 +429,20 @@ local function logEntity(entity, spatial, hurtbox)
 
     for index = 1, count do
         local capA, capB, radius
-        local label
+        local label, ridden
         if hurtbox then
-            capA, capB, radius = hurtbox:endpoints(index, pose)
+            -- READ FROM THE LIMB, not the root. Reading the root here would
+            -- report zero rel-root drift on every zone forever, which is
+            -- exactly the symptom this log exists to distinguish -- the
+            -- instrument would be manufacturing the finding.
+            local bound = hurtbox:anchorFor(index)
+            local zonePose = (bound and bound.Parent and bound.CFrame) or pose
+            capA, capB, radius = hurtbox:endpoints(index, zonePose)
             label = hurtbox:zoneName(index)
+            ridden = (bound and bound.Parent) and bound.Name or "ROOT (unbound)"
         else
             capA, capB = spatial:endpoints(pose)
-            radius, label = spatial.radius, "Body"
+            radius, label, ridden = spatial.radius, "Body", "ROOT"
         end
 
         -- The capsule's centre is the honest single number for "where is this
@@ -430,10 +457,9 @@ local function logEntity(entity, spatial, hurtbox)
         end
 
         print(string.format(
-            "    %-10s world (%6.1f,%6.1f,%6.1f)   rel root (%5.2f,%5.2f,%5.2f)"
-                .. "   r=%.2f   rel drift %.3f",
-            label,
-            centre.X, centre.Y, centre.Z,
+            "    %-10s on %-14s rel root (%5.2f,%5.2f,%5.2f)   r=%.2f   "
+                .. "rel drift %.3f",
+            label, ridden,
             relative.X, relative.Y, relative.Z,
             radius, drift))
     end

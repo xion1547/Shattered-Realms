@@ -89,6 +89,18 @@ export type Zone = {
     -- hemisphere at each end.
     halfHeight: number,
 
+    -- The NAME of the rig part this zone rides. `offset` is relative to that
+    -- part's pose, so the zone follows the animation.
+    --
+    -- A NAME, NEVER AN INSTANCE, and that is the whole reason this is a string.
+    -- The same definition table is shared by every body of a given kind and
+    -- survives every respawn; an Instance reference would bind one list to one
+    -- corpse. Resolution to an actual part happens per body, in `bind`.
+    --
+    -- Absent means "ride the body's root", which is right for anything with
+    -- one part -- a dummy -- and is the fallback when a named part is missing.
+    anchor: string?,
+
     -- Diagnostics only. Never read by resolution -- it exists so an overlay can
     -- label what you are looking at, and so a boot check can say WHICH zone is
     -- malformed instead of "zone 4".
@@ -128,10 +140,15 @@ function HurtboxComponent.new(zones: { Zone })
         assert(type(zone.halfHeight) == "number" and zone.halfHeight >= 0, string.format(
             "[HurtboxComponent] zone '%s': halfHeight must be zero or positive", label))
 
+        assert(zone.anchor == nil or type(zone.anchor) == "string", string.format(
+            "[HurtboxComponent] zone '%s': anchor must be a part NAME, not an "
+                .. "Instance -- it is resolved per body in bind()", label))
+
         copied[index] = table.freeze({
             offset = zone.offset,
             radius = zone.radius,
             halfHeight = zone.halfHeight,
+            anchor = zone.anchor,
             name = zone.name,
         })
 
@@ -144,11 +161,74 @@ function HurtboxComponent.new(zones: { Zone })
     return setmetatable({
         zones = table.freeze(copied),
         _bounding = bounding,
+
+        -- Resolved per body by `bind`. Empty until then, and every zone falls
+        -- back to whatever pose a caller supplies.
+        _anchors = {},
     }, HurtboxComponent)
 end
 
 function HurtboxComponent:zoneCount(): number
     return #self.zones
+end
+
+-- Resolves each zone's anchor NAME to an actual part on this body.
+--
+-- CALLED ON EVERY ATTACH, INCLUDING EVERY RESPAWN, and that is not an
+-- optimisation to skip. A respawned character is a brand new set of Instances;
+-- anchors resolved against the previous body point at parts that have been
+-- destroyed, and a zone hanging off a destroyed part silently stops moving.
+-- That reads as "the hurtbox is stuck", which is a bug nobody would think to
+-- look for here.
+--
+-- A MISSING PART FALLS BACK TO THE ROOT AND WARNS ONCE, rather than erroring.
+-- The list is content and the rig is art, and the two drift: an R6 character,
+-- a renamed limb, a boss exported without a part. Failing hard would make one
+-- bad zone name cost the whole body's hittability, which is a much worse
+-- outcome than one zone in the wrong place -- and the warning is what stops it
+-- being silent.
+function HurtboxComponent:bind(model: Instance?, root: BasePart?)
+    table.clear(self._anchors)
+
+    for index, zone in ipairs(self.zones) do
+        local part = nil
+
+        if zone.anchor and model then
+            local found = model:FindFirstChild(zone.anchor)
+            if found and found:IsA("BasePart") then
+                part = found
+            else
+                warn(string.format(
+                    "[HurtboxComponent] zone '%s' wants part '%s' and this body has "
+                        .. "no such BasePart -- falling back to the root, so this "
+                        .. "zone will not follow the animation",
+                    zone.name or tostring(index), zone.anchor))
+            end
+        end
+
+        self._anchors[index] = part or root
+    end
+end
+
+-- The part zone `index` rides, or nil when nothing has been bound.
+--
+-- CALLERS READ THIS TO GET THE POSE, rather than the component reading it
+-- itself, and that is what keeps the whole thing rewindable: resolution needs
+-- the pose this part had at a PAST moment, which comes from a history buffer
+-- and not from the live Instance. A component that read `part.CFrame` itself
+-- would only ever be able to answer about now.
+function HurtboxComponent:anchorFor(index: number): BasePart?
+    return self._anchors[index]
+end
+
+-- Convenience for the LIVE case -- diagnostics, and anything that genuinely
+-- wants "where is this zone right now". Never the path resolution takes.
+function HurtboxComponent:livePose(index: number): CFrame?
+    local part = self._anchors[index]
+    if part and part.Parent then
+        return part.CFrame
+    end
+    return nil
 end
 
 -- The two segment endpoints of zone `index`, in WORLD space, given the pose to

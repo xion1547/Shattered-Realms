@@ -202,7 +202,14 @@ function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHei
     -- with a stale zone list is exactly the silent wrongness this layer
     -- specialises in.
     if zones then
-        entity.hurtbox = HurtboxComponent.new(zones)
+        local hurtbox = HurtboxComponent.new(zones)
+
+        -- Bound against the anchor's PARENT -- the character Model or the rig
+        -- -- because that is where limbs are siblings of the root. Binding
+        -- against the root itself would find nothing: `HumanoidRootPart` has no
+        -- `LeftUpperArm` inside it.
+        hurtbox:bind(anchor.Parent, anchor)
+        entity.hurtbox = hurtbox
     end
 
     if not self._attached[entity] then
