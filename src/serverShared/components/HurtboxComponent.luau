@@ -31,23 +31,33 @@
 -- ZONES ARE OFFSETS FROM A POSE THE CALLER SUPPLIES
 -- ============================================================================
 --
--- `endpoints(i, pose)` takes the pose to hang zone `i` off. Today every caller
--- passes the body's ROOT pose, which is correct for players and for anything
--- that does not animate:
+-- `endpoints(i, pose)` takes the pose to hang zone `i` off, and `bind` resolves
+-- each zone's named part so a caller knows WHICH pose to pass. A zone rides its
+-- own limb: raise an arm and its capsule goes up with it.
 --
---   * a player's limbs are animated by THEIR CLIENT, so the server's copy of
---     them diverges by roughly the interpolation constant (HitDetection 9.6).
---     Anchoring to the root -- the slowest, best-replicated part of the body --
---     avoids inheriting that, and a humanoid's hittable mass barely changes as
---     its arms swing.
---   * a dummy does not move at all.
+-- THE CALLER SUPPLIES THE POSE RATHER THAN THIS FILE READING IT, and that is
+-- what keeps the whole thing rewindable. Resolution needs where a limb was at a
+-- PAST moment, which comes from a history buffer, not from the live Instance. A
+-- component that read `part.CFrame` itself could only ever answer about now.
 --
--- A SERVER-ANIMATED BOSS IS THE CASE THAT WILL WANT MORE, and this signature
--- already allows it. A flapping wing needs its zone hung off the WING's pose,
--- not the root's, or the hurtbox stays in the rest position while the wing
--- moves. That needs one history per anchor rather than one per body, which is
--- why it is not here yet -- see HitDetection 7.2a. Nothing in this file
--- changes when it arrives; the caller passes a different pose.
+-- > A ROOT-ANCHORED VERSION WAS BUILT FIRST AND REVERSED 2026-08-22. Every zone
+-- > hung off the body's root, which produced a rigid arrangement of capsules
+-- > ignoring the pose entirely -- a mannequin riding the player. The reasoning
+-- > was that a client-animated limb reaches the server ~0.104s stale, worth
+-- > 4.7 studs at full swing speed. Real number, wrong one to design around:
+-- >
+-- >     error = limb speed x 0.104s
+-- >     walking  ~3/sec -> 0.30 studs   (an arm capsule's radius is 0.28)
+-- >     swinging ~45/sec -> 4.68 studs
+-- >
+-- > At the speeds a body spends nearly all its time at, the error is under the
+-- > capsule's own thickness. HurtboxDefinitions carries the full argument.
+--
+-- WHAT IS STILL OWED, and it is not in this file: resolution rewinds, so each
+-- zone needs its own history rather than one buffer per body -- a wing and a
+-- torso are in different places at different moments. Until that lands, the
+-- overlay reads limbs LIVE and resolution still tests the old single capsule.
+-- HitDetection 7.2a.
 --
 -- ============================================================================
 -- HOW A ZONE LIST GETS AUTHORED

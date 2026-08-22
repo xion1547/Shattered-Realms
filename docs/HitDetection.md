@@ -553,14 +553,77 @@ wing's own frame, a 40° wing rotation rotates the zone 40° for free.
 
 **What it costs, and it is affordable.** Each zone needs its own history — the
 wing and the torso are in different places at different moments, so one buffer
-per body cannot serve both. Nine zones × 47 slots × a `CFrame` is roughly 27KB
-per creature; twenty creatures is about half a megabyte. Sampling is nine
-`CFrame` reads instead of one, thirty times a second.
+per body cannot serve both. Ten zones × 47 slots × a `CFrame` is roughly 30KB
+per body; twenty bodies is about half a megabyte. Sampling is ten `CFrame`
+reads instead of one, thirty times a second.
 
 **This was previously blocked and is no longer.** The root-relative version was
 chosen to avoid depending on whether a server script can observe animated limbs.
 `LimbProbe` answered that (9.6): it can. The simplification outlived its reason
 and was not revisited when the reason expired — which is its own lesson.
+
+#### It applies to PLAYERS too, and that took two attempts
+
+**Status:** SETTLED 2026-08-22, after building the wrong one and looking at it.
+
+A player's limbs are animated by their *client*, so the server's copy is ~0.104s
+stale (9.6). The first answer was to spare players that by anchoring their zones
+to the **root** — the slowest, best-replicated part of the body.
+
+**Built, drawn, and immediately obviously wrong.** It produces a rigid
+arrangement of capsules that ignores the pose entirely: a mannequin riding the
+player, arms fixed at its sides no matter what the body does.
+
+The error the design was avoiding is `limb speed × 0.104s`, and that is the
+number worth writing down:
+
+| Limb doing | Speed rel. root | Error | Arm capsule radius |
+|---|---|---|---|
+| **Standing, walking** | ~3 studs/sec | **0.30 studs** | **0.28** |
+| Running | ~6 studs/sec | 0.62 studs | 0.28 |
+| Mid sword-swing | ~45 studs/sec | 4.68 studs | 0.28 |
+
+**At the speeds a body spends nearly all its time at, the error is smaller than
+the capsule's own thickness.** Root-anchoring bought exactness on zones that
+were never meaningfully inaccurate, and paid for it with a permanent visual
+wrongness on every zone.
+
+**The swing row is real and is accepted.** During a player's own attack an ARM
+zone is briefly stale — the smallest zone on the body, on the *defensive* side,
+where Part 6's "defense is generous" already errs their way. And it says nothing
+about their own attacks, which use `PATH` (9.4) and touch no limb at all.
+
+> *The test that catches the first attempt: draw it and look. A design whose
+> cost is "the body no longer matches the pose" cannot survive being seen, and
+> was argued about for an hour before anyone rendered it.*
+
+#### Splitting at the joints is the point
+
+Riding limbs with **one capsule per arm** — anchored to the upper arm, stretched
+over the forearm — is fine while the arm is straight and wrong the moment an
+elbow bends, which is most of what an arm does. That would keep the mannequin
+problem in a smaller costume.
+
+So the player list is **ten zones**: head, torso, and upper/lower for each arm
+and leg. Torso stays merged because the waist barely articulates; hands and feet
+ride the forearm and shin capsules until something needs to tell a hand from an
+elbow.
+
+#### `anchor` is a NAME, never an Instance
+
+One definition table is shared by every body of a kind and survives every
+respawn. An `Instance` reference would bind one list to one corpse.
+
+**`bind` resolves names per body, on every attach including respawn.** Not an
+optimisation to skip: a respawned character is a whole new set of Instances, and
+a zone hanging off a destroyed part silently stops moving — which reads as *"the
+hurtbox is stuck"*, a bug nobody would think to look for in a component.
+
+**A missing part falls back to the root and warns**, rather than erroring. The
+zone list is content and the rig is art, and the two drift — an R6 character, a
+renamed limb, a boss exported without a part. One bad zone name should not cost
+a whole body's hittability, and the warning is what stops the fallback being
+silent.
 
 ### 7.2b — The anchor is a `Bone` on a skinned mesh and a `Part` on a rigid rig
 
@@ -1453,8 +1516,10 @@ is not duplicated here; this is the shape of it.
 | Overlap math, four shapes vs capsule targets | **BUILT** |
 | `TargetResolution`, five stages | **BUILT** |
 | `SWEEP` + wedges + the stopwatch driver | **BUILT**, player direction verified |
-| One capsule per entity | **BUILT — and it is the placeholder, not the design** |
-| `HurtboxComponent`, the hitzone list | **UNBUILT.** The next real work. Per-limb anchors, per-zone history — 7.2a |
+| One capsule per entity | **STILL WHAT RESOLUTION TESTS.** The placeholder, now drawn beside its replacement |
+| `HurtboxComponent` + `HurtboxDefinitions` | **BUILT 2026-08-22.** Ten limb-anchored zones for a player, one for a dummy. Drawn by `HurtboxDebug`; **not yet tested against** |
+| Per-zone history | **UNBUILT, and it is what blocks resolution using zones** — 7.2a |
+| Reading zones off a rig's parts (bosses) | **UNBUILT.** Players are typed; bosses want the authored route — 7.3 |
 | `motion` as a field | **UNBUILT.** Currently implied by `sweep` |
 | `PATH`, `PROJECTILE`, `LIVE` | **UNBUILT.** Ownership decides which — 9.0a |
 | Beats | **UNBUILT**, and blocked on the Score existing |
