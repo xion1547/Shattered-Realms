@@ -75,6 +75,7 @@
 
 ## Table of Contents
 
+0. **Orientation — Real, Authoring-Only, And Math**
 1. What This Layer Is For
 2. The Model — Two Volumes, Two Owners
 3. DETECT — A Fifth Phase
@@ -92,6 +93,137 @@
 15. Known Gaps
 16. Rejected Designs, And The Reversals
 17. Naming
+
+---
+
+## Part 0 — Orientation — Real, Authoring-Only, And Math
+
+**Status:** SETTLED as the vocabulary. Written 2026-08-21 after the same
+confusion recurred across an entire day of conversation.
+
+> **Read this first if you are returning to this document.** Every argument
+> that went in circles went in circles for one reason: *"is the hitbox a real
+> part"* has three different answers depending on which stage you are asking
+> about, and none of the earlier revisions said so.
+
+### 0.1 — The three categories
+
+**REAL — actual Instances, alive while the game runs:**
+
+| | |
+|---|---|
+| The creature's mesh, or its rigid parts | what you see |
+| Its `Bone`s or `Motor6D`/`AnimationConstraint` joints | what the animation moves |
+| The `Animator` on each rig | what plays clips |
+| A hitbox proxy part — **only under `LIVE`** (9.6) | a **ruler**, never a collider |
+| Debug overlays | drawings. Nothing is ever tested against them |
+
+**AUTHORING-ONLY — real parts in Studio, gone before the game runs:**
+
+| | |
+|---|---|
+| Hurtbox parts placed on limbs | read once at spawn, then deleted (Part 7) |
+| The hitbox part dragged through a swing | recorded into a path, never shipped (9.4) |
+
+**MATH — numbers, no Instance, ever:**
+
+| | |
+|---|---|
+| Every hurtbox capsule | anchor + offset + radius + halfHeight |
+| Every hit volume | a shape and a transform |
+| **The overlap test** | **always, in every design** |
+| Position history | ring buffers of `CFrame`s |
+
+### 0.2 — The rule the three categories collapse into
+
+> **You author with real parts. The game runs on numbers.**
+
+**Both volumes. Every time.** A part is an excellent authoring tool — you can
+drag it, resize it, and judge it by eye, which a typed number can never be — and
+it is impossible as a test mechanism, because **a part only exists *now*** and
+this layer's entire job is answering questions about a moment that has passed.
+
+**Roblox collision is never used.** Not `Touched`, not `GetPartsInPart`, not
+`Shapecast`. Every hit is our own arithmetic. Where a real part survives to
+runtime (`LIVE` only), it supplies *one number* — where the blade is — and that
+number then enters the same math as every other route.
+
+### 0.3 — The end-to-end trace, both directions
+
+**A boss wing-slam.** The server owns this rig, so the hitbox is `LIVE` — no
+path file, no export step.
+
+```
+SPAWN
+  clone the boss into Workspace
+  read 9 hurtbox parts  ->  9 zones of numbers.  Parts deleted
+  SpatialService samples all 9 zones, 30Hz, forever
+
+THE ATTACK
+  server plays the clip        <- the server's OWN parts genuinely move
+  the score's beats say: live from 0.55s to 0.80s
+
+  each tick at 60Hz while live:
+      hitbox   read the welded proxy part's CFrame     REAL PART, as a ruler
+      targets  each player's zones, NO REWIND          the telegraph is the
+                                                       compensation (Part 6)
+      test     capsule vs capsule                      MATH
+      dedup    once per activation
+```
+
+**A player sword swing.** A client owns this rig, so the hitbox is `PATH`.
+
+```
+CLICK
+  client plays the swing immediately, optimistically
+  sends "I pressed attack"
+
+SERVER
+  validate: owns the skill, off cooldown, allowed to act
+
+  each tick at 60Hz across the window:
+      hitbox   rootCFrame * lerp(path[11], path[12], 0.4)   MATH. No part
+      targets  zones rewound to viewTimeFor(player)         MATH, from history
+      test     capsule vs capsule                           MATH
+      dedup
+```
+
+**Both traces call the identical overlap function and the identical dedup.**
+Exactly one line differs, and it is the line marked `hitbox`.
+
+### 0.4 — This is what Souls-likes build
+
+Worth stating because it comes up as a doubt rather than as a question:
+
+| What makes that genre's hit detection good | Us |
+|---|---|
+| Many capsules per creature, never one envelope | the hitzone list, Part 7 |
+| Hit windows tied to animation events | beats, 9.10 |
+| Hitbox follows the weapon's real motion | `LIVE` on server rigs, an authored path on client rigs |
+| Consistent frame to frame | the 60Hz driver, 9.4.4 |
+
+**The capsule approximation is on both sides of that table.** Nobody runs
+per-triangle collision against a deforming mesh, and not for performance
+reasons — see 16.2, *"it makes every art change a balance change."*
+
+**The one row we have and they do not:** the attacker and the victim are on
+different machines. Rewind (Part 6) is the entire answer to it, and it is the
+only part of this architecture that is not borrowed.
+
+### 0.5 — The overlay is not a nicety. It is how this gets verified.
+
+Every claim in this document about *where* a volume is can be checked by
+drawing it, and **essentially none of it can be checked by reading numbers.**
+
+> **Requirement, not an aspiration: every volume this layer tests against must
+> be drawable in colour, live, behind a `DebugConfig` flag.** Hurtboxes,
+> hitboxes, and the path a hitbox travels.
+
+The reason is Part 15's recurring theme — **nearly every failure in this layer
+is silent.** A hurtbox anchored to the wrong bone still returns hits. A path
+that cuts the corner of an arc still hits things. A stale recording still hits
+things. None of them error, none of them fail a test, and all of them are
+obvious the instant they are on screen next to the model.
 
 ---
 
@@ -399,6 +531,75 @@ sampling.
 > the four volume tests in closed form.** A box has no radius to sum, and every
 > one of the four degrades.
 
+### 7.2a — EACH ZONE ANCHORS TO ITS OWN LIMB, NOT TO THE ROOT
+
+**Status:** SETTLED 2026-08-21. **Corrects a design proposed and nearly built
+the same day**, which is why it is called out rather than folded in silently.
+
+The rejected version stored each zone as an offset **from the body's root**,
+read once at spawn. It is cheaper — one history per entity instead of one per
+zone — and it is wrong the moment anything animates:
+
+> A boss flaps its wings. The wings move. **The hurtboxes stay in the rest
+> pose.** Nothing errors. The wing is simply not where it can be hit.
+
+```
+WRONG    zone = rootCFrame * offset          the wing flaps, the zone does not
+RIGHT    zone = wingAnchor.CFrame * offset   the zone flaps with it
+```
+
+**The offset is frozen; the thing it hangs off is not.** Expressed in the
+wing's own frame, a 40° wing rotation rotates the zone 40° for free.
+
+**What it costs, and it is affordable.** Each zone needs its own history — the
+wing and the torso are in different places at different moments, so one buffer
+per body cannot serve both. Nine zones × 47 slots × a `CFrame` is roughly 27KB
+per creature; twenty creatures is about half a megabyte. Sampling is nine
+`CFrame` reads instead of one, thirty times a second.
+
+**This was previously blocked and is no longer.** The root-relative version was
+chosen to avoid depending on whether a server script can observe animated limbs.
+`LimbProbe` answered that (9.6): it can. The simplification outlived its reason
+and was not revisited when the reason expired — which is its own lesson.
+
+### 7.2b — The anchor is a `Bone` on a skinned mesh and a `Part` on a rigid rig
+
+**Status:** SETTLED 2026-08-21.
+
+Two rig kinds exist and they are genuinely different objects. Earlier revisions
+of this Part described only the first, which made every statement here quietly
+wrong for creatures exported from Blender.
+
+| | **Rigid-part rig** | **Skinned mesh** |
+|---|---|---|
+| What it is | separate parts joined by `Motor6D` / `AnimationConstraint` | **one mesh**, deformed by a tree of `Bone`s |
+| R15 characters | this | — |
+| A creature rigged in Blender | — | **this** |
+| Is there a "wing part" to read? | yes | **no. There is no wing part** |
+| A hurtbox anchors to | the Part | **the Bone** |
+
+**One branch, at spawn: is this anchor a `Part` or a `Bone`?** Both expose an
+animated world `CFrame`, so everything downstream is byte-identical. Nothing
+else in this layer learns which kind it got.
+
+**The honest limit, stated so it is not discovered as a bug:**
+
+> **Joint motion is captured exactly. Surface deformation is not.**
+
+A capsule on a wing bone follows that wing perfectly through a flap, a dive, a
+dash — because the bone *is* the source of truth for where the wing is. The
+membrane billowing around it is not a capsule and never will be.
+
+| Situation | Captured? |
+|---|---|
+| Wing sweeping through an arc | **exactly** |
+| A tail whipping | **exactly — with 3–4 capsules along it.** One capsule for a whole tail is bad, and that is an authoring failure rather than a model failure |
+| Membrane billow, cloth, fur, muscle bulge | no. Nor in any shipped game |
+| Squash-and-stretch on a landing | no. A few percent |
+
+**Surface deformation is almost never what decides a hit**, and chasing it is
+what 16.2 rejects under *"exact intersection against real mesh geometry."*
+
 ### 7.3 — Three places a hurtbox can be authored
 
 All three reduce to **an anchor, a radius, and a half-height**, so nothing
@@ -522,10 +723,60 @@ slash.
 **Status:** DESIGNED. `STATIC` and `SWEEP` are **BUILT**; `PATH`, `PROJECTILE`
 and `LIVE` are **UNBUILT**. This Part is the reframe.
 
-> **DECIDED 2026-08-21: `PATH` (9.4) is the model for weapon attacks.** `LIVE`
-> (9.6) was the leading alternative and is kept in full as the fallback, along
-> with the measurement that settled it. `SWEEP` is not deprecated — it stays as
-> the cheap option for volumes that genuinely are a rotating fan.
+> **DECIDED 2026-08-21, and this supersedes a flat "`PATH` is the default"
+> written earlier the same day.** The choice is not a preference. It is read off
+> network ownership:
+>
+> | Rig animated by | Hitbox | Files per attack |
+> |---|---|---|
+> | **the server** — bosses, NPCs | **`LIVE`** (9.6) | **zero** |
+> | **a client** — players | **`PATH`** (9.4) | one, generated |
+>
+> **This is an ownership branch, not an entity-type branch**, and that
+> distinction is the same one 7.4 already draws for hurtboxes: *ownership is a
+> property that can be read; entity kind is a category someone has to remember
+> to check.*
+>
+> `SWEEP` is not deprecated — it stays as the cheap option for volumes that
+> genuinely are a rotating fan. See 9.0a for why ownership is the deciding
+> axis rather than taste.
+
+### 9.0a — Why ownership decides, and why this argument kept recurring
+
+**Status:** SETTLED 2026-08-21, after research rather than another round of
+weighing properties.
+
+The industry is genuinely split on this, and **it splits on exactly one axis:**
+
+| Approach | Used by | Why |
+|---|---|---|
+| Colliders attached to bones, read at runtime | 3D action games, Souls-likes, the Unity/Unreal default | the simulation is trusted and single-authority |
+| Per-frame authored hitbox data | fighting games, rollback netcode | must be deterministic across two machines |
+
+The deciding finding, near-verbatim from the research: *frame-authored data
+gives more predictable netcode because the hit windows are predetermined;*
+**bone-attached colliders require the netcode to guarantee both machines have
+synchronised skeletal animation at the same frame.**
+
+**That is the condition `LimbProbe` measured, and it does not hold for a
+client-owned rig** — ~0.104s of divergence (9.6). It holds perfectly for a
+server-owned one, where there is no second machine in the loop at all.
+
+The same story from the Roblox side: the widely-used bone-attached module has
+the reported failure *"fires raycasts on the server which can have latency
+issues for players with high ping,"* and the community workaround is
+client-reports-hits with a server sanity check — which Part 12 refuses outright.
+
+**Why this Part kept being re-argued:** every previous attempt asked *"which is
+better."* There is no answer to that, which is why it never stayed settled.
+Asked as *"better for which ownership,"* it resolves and stays resolved — you
+read the ownership and it tells you.
+
+**And the file-count objection dissolves on its own.** The worry was N path
+files for N animations. Bosses — where nearly all the attack variety lives — get
+the **zero-file** route, because the server owns the rig. Players get files, and
+a class has perhaps a dozen attacks, generated by a recording step rather than
+typed.
 
 ### 9.0 — The question every previous revision skipped
 
@@ -627,6 +878,46 @@ RUNTIME (server)   transformAt(n) = rootCFrame * evaluate(track, t)
 | **Deterministic** | same input, same path, every time. A physics read is not |
 | **The client cannot influence it** | the server evaluates its own copy. No bounds check to write, no trust to spend |
 | **Cheaper than today** | a lerp between two keys, against `CFrame.lookAt` plus an angle rotation |
+
+#### 9.4.0 — STORE THE PIVOT, NOT THE BLADE TIP
+
+**Status:** SETTLED 2026-08-21. Small, easy to get wrong, and invisible when
+wrong.
+
+A blade travels an **arc**. Interpolating between two stored *positions* gives a
+**straight line**, so a lerp cuts the corner:
+
+```
+        the actual arc
+      ,--------------.
+     /                \        the gap is the error
+    A ----------------- B      <- what a position lerp gives you
+```
+
+The gap scales viciously with how far apart the keys are. For a 6.5-stud blade
+through 160°:
+
+| Keys in the path | Degrees per segment | Worst-case error |
+|---|---|---|
+| 3, hand-placed | 80° | **1.52 studs** — three blade-widths |
+| 8 | 23° | 0.13 studs |
+| 24, recorded at 60Hz | 6.7° | 0.011 studs — nothing |
+
+**The fix removes it entirely rather than shrinking it.** `CFrame:Lerp`
+interpolates *rotation* spherically, not linearly. So store the **pivot's**
+frame — where the shoulder is and which way it points — and define the blade as
+a capsule extending from it. Interpolating gives a true in-between **angle**, and
+the tip traces the real arc.
+
+> **The arc is then exact at any key density.** Three keyframes or three
+> hundred.
+
+This is also what `SWEEP` already does — rotate the origin, let the blade extend
+from it. Same trick, with the angle read from data instead of computed.
+
+**The trap it prevents:** storing tip positions works fine on a dense recording
+and fails badly the moment someone hand-authors a sparse path, which is exactly
+the case where nobody would think to check.
 
 #### 9.4.1 — The drift risk, named because it is the one real cost
 
@@ -1163,9 +1454,9 @@ is not duplicated here; this is the shape of it.
 | `TargetResolution`, five stages | **BUILT** |
 | `SWEEP` + wedges + the stopwatch driver | **BUILT**, player direction verified |
 | One capsule per entity | **BUILT — and it is the placeholder, not the design** |
-| `HurtboxComponent`, the hitzone list | **UNBUILT.** This is the next real work on the hurtbox side |
+| `HurtboxComponent`, the hitzone list | **UNBUILT.** The next real work. Per-limb anchors, per-zone history — 7.2a |
 | `motion` as a field | **UNBUILT.** Currently implied by `sweep` |
-| `PATH`, `PROJECTILE`, `LIVE` | **UNBUILT.** `PATH` is the chosen model — 9.4 |
+| `PATH`, `PROJECTILE`, `LIVE` | **UNBUILT.** Ownership decides which — 9.0a |
 | Beats | **UNBUILT**, and blocked on the Score existing |
 | Enemy attacks | **never run.** No enemy has attacked |
 
@@ -1395,3 +1686,29 @@ it will search for.**
 | `Timeline.md` | The Score, the Conductor, and what a beat is on the client side |
 | `Architecture-Reference.md` | The generic-engine test, the phase boundaries, the Component contract |
 | `Implementation-Status.md` | What is actually built, authoritatively |
+
+---
+
+## Appendix — What Changed On 2026-08-21
+
+A single day's conversation reversed or corrected seven things. Listed together
+because the *pattern* is more useful than any individual entry.
+
+| # | Was | Is | What caused the error |
+|---|---|---|---|
+| 1 | A hitbox is typed numbers | It has a `motion` field — Part 9 | An assumption nobody had attacked, because no requirement had tested it |
+| 2 | Art-driven hitboxes rejected: *"the precision is available from `sweep`"* | False. `sweep` rotates about Y only | Generalising from the one attack that existed |
+| 3 | Hitboxes never need history | True only for formula-driven ones | A conditional claim stated unconditionally |
+| 4 | `BAKED` is a motion kind | It is an authoring route for `PATH` | A way of **producing** data filed as a way of **consuming** it |
+| 5 | `PATH` is the default, flatly | Ownership decides — 9.0a | Asking "which is better" instead of "better for what" |
+| 6 | Hurtbox zones offset from the **root** | Offset from **their own limb** — 7.2a | A simplification adopted to dodge an open question, not revisited when the question closed |
+| 7 | Every rig has parts to anchor to | Skinned meshes have `Bone`s and no limb parts — 7.2b | Describing one rig kind as though it were the only one |
+
+**Three of those (3, 4, 6) share a shape worth recognising:** a statement that
+was true under conditions nobody wrote down, left standing after the conditions
+changed. The defence is not more care at the time — it is recording *what a
+claim depends on* alongside the claim.
+
+**And the reason this Part was re-argued so many times** is entry 5. "Which is
+better" has no stable answer, so it never stayed settled. "Better for which
+ownership" resolves once.
