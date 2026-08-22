@@ -228,3 +228,50 @@ it drops real coverage of an unrelated system. Replace the fixture first.
 **The animation asset owner has not been chosen** (personal account vs group).
 It gates the first upload, and getting it wrong means re-uploading every
 animation in the game. `Animation.md` §2 has the detail.
+
+---
+
+## Spatial vs Hurtbox — the distinction is settled but undocumented
+
+**Decided 2026-08-22 in conversation; not yet written into any document.**
+
+The question was whether per-limb position history should be a child component
+of `SpatialComponent`, since `SpatialComponent` was conceived as "the entity as
+a whole" and its header still says so.
+
+**Answer: it collapses into `SpatialComponent`, keyed by part.** The reasoning
+is the `PetRoster` → `Equipment` precedent in Architecture Part 7: *compare the
+bookkeeping.* A per-limb ring buffer needs a preallocated ring that never
+grows, ordered samples, interpolated lookup by timestamp, and clearing on
+rebind — **which is `SpatialComponent` exactly, with an explicit key instead of
+an implicit one.** A child would duplicate every one of those invariants.
+
+It also gets the lifecycle for free rather than by wiring: one `clearHistory`
+clears every ring, one `setAnchor` rebuilds them all, and there is no teardown
+to keep in sync because there is one owner.
+
+**The distinction that should be stated explicitly in both files' headers, and
+currently is not:**
+
+| | `HurtboxComponent` | `SpatialComponent` |
+|---|---|---|
+| Holds | **shape** — a capsule of radius r, offset from a named limb | **position over time** — where that limb was, at t |
+| True | regardless of where the body is, or when | only at a specific moment |
+| Written | once, at attach, then frozen | 30 times a second, forever |
+
+> **The test that separates them: does it change while the game runs?** Shape
+> does not. Position does.
+
+That is also why `endpoints(index, pose)` takes the pose as a parameter rather
+than reading it — the hurtbox deliberately has no position, which is exactly
+what makes it rewindable.
+
+**Rejected in the same conversation: grouping capsules under a "limb" layer.**
+The case that looked like it would demand one was Monster Hunter-style
+breakable parts — "this horn is broken" being a property of a limb rather than
+of one capsule. It does not demand one: breaking a horn is *shrink or remove
+the capsules and swap the model*, which the flat list already expresses. Add a
+limb layer only if something needs per-limb state that capsules cannot carry.
+
+**Where this goes:** `HitDetection.md` Part 4 (which describes the Spatial
+layer) and Part 7, plus both component headers.
