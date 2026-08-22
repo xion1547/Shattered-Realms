@@ -210,6 +210,23 @@ function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHei
         -- `LeftUpperArm` inside it.
         hurtbox:bind(anchor.Parent, anchor)
         entity.hurtbox = hurtbox
+
+        -- Every limb the zones ride has to be SAMPLED, or resolution has no
+        -- history to rewind them through. `_ensureTrack` deduplicates, so
+        -- zones sharing a limb cost one track rather than several, and the
+        -- anchor is skipped because it already has its own.
+        --
+        -- AFTER setAnchor, NOT BEFORE: setAnchor calls clearHistory, which
+        -- drops every track. Registering first would throw these away
+        -- immediately and leave the limbs silently unsampled.
+        local limbs = {}
+        for index = 1, hurtbox:zoneCount() do
+            local part = hurtbox:anchorFor(index)
+            if part then
+                table.insert(limbs, part)
+            end
+        end
+        entity.spatial:trackParts(limbs)
     end
 
     if not self._attached[entity] then
@@ -272,7 +289,7 @@ function SpatialService:tick(_dt: number)
     for entity in pairs(self._attached) do
         local spatial = entity.spatial
         if spatial and spatial:isAnchored() then
-            spatial:record(now, spatial.anchor.CFrame)
+            spatial:recordAll(now)
         else
             -- The body left the world -- a character respawning, an enemy
             -- despawning, a player disconnecting. Self-healing on purpose:
