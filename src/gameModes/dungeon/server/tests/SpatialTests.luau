@@ -10,7 +10,7 @@
 -- deliberately write past the end and read across the seam.
 --
 -- What is NOT tested here, because it needs a live client: the actual
--- latency figure. PingProbe covers that.
+-- latency figure. A live session covers that.
 
 local ServerStorage = game:GetService("ServerStorage")
 local components = ServerStorage:WaitForChild("Shared"):WaitForChild("components")

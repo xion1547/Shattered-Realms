@@ -44,24 +44,23 @@ DummySpawner.spawnAll()
 local HurtboxDebug = require(diagnostics:WaitForChild("HurtboxDebug"))
 HurtboxDebug.start()
 
--- TEMPORARY: every dummy faces the nearest player and swings on a timer, so
--- the enemy->player direction can be watched. Started AFTER the spawner
--- because it reads the spatial attach set to build its schedule -- run it
--- first and it arms nothing.
+-- RETIRED 2026-08-21, both moved to `_toDelete/` at the repo root:
 --
--- Takes the router so it can push damage down the same EventTape remote
--- everything else uses, rather than standing up a second wire for health.
-local EnemyAttackDemo = require(diagnostics:WaitForChild("EnemyAttackDemo"))
-EnemyAttackDemo.start(serverManager.router)
-
--- TEMPORARY, and scheduled for deletion the moment it has answered its one
--- question: can a SERVER script observe a limb moving while a CLIENT plays the
--- animation? The answer decides how hitboxes get their position
--- (HitDetection.md Part 9) and nothing downstream of that can be built until
--- it is known.
+--   EnemyAttackDemo   dummies swung at players on a timer. Removed with the
+--                     rest of the enemy attack path -- enemies come back once
+--                     the PATH hitbox model exists (HitDetection.md Part 9),
+--                     and giving them the old SWEEP model first would mean
+--                     building it twice.
 --
--- Builds its own control rig rather than borrowing a dummy, so that a null
--- result can be distinguished from a broken measurement -- see the file's
--- header. Started last because it watches things everything else created.
-local LimbProbe = require(diagnostics:WaitForChild("LimbProbe"))
-LimbProbe.start()
+--   LimbProbe         answered its one question and was deleted, which is what
+--                     it said it would do. The finding is recorded as MEASURED
+--                     in HitDetection.md 9.6: the server does see a
+--                     client-animated limb, trailing by ~0.104s against an
+--                     INTERPOLATION_CONSTANT of 0.100s.
+--
+--   PingProbe         same -- the unit question it existed for is closed in
+--                     HitDetection.md Part 6.
+--
+--   SweepTrace        per-wedge table for a swing. Retired with the SWEEP
+--                     default; its header also asserted that a hitbox never
+--                     needs history, which stopped being true under PATH.

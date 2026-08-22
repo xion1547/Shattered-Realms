@@ -1,6 +1,6 @@
 -- src/gameModes/dungeon/server/diagnostics/DummySpawner.luau
 --
--- TEMPORARY, like PingProbe. Ten anchored dummies so hit detection has
+-- TEMPORARY. Ten anchored dummies so hit detection has
 -- something to hit. Delete once ZoneService spawns real encounters.
 --
 -- A MODULE, NOT A .server SCRIPT, AND THAT IS LOAD-BEARING.
@@ -13,7 +13,7 @@
 -- it passed or failed depending on which script Roblox happened to start
 -- first.
 --
--- PingProbe can safely stay a Script because it only OBSERVES. This one
+-- A Script that only OBSERVES can be independent. This one
 -- mutates the world the tests run against, so Main.server.luau calls it after
 -- ServerManager:init(), where the ordering is written down and readable.
 --

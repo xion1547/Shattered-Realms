@@ -105,8 +105,8 @@ local HISTORY_LENGTH = math.ceil(HISTORY_SECONDS * SAMPLE_HZ) + 2
 -- milliseconds made the latency term 24 microseconds, so rewindWindowFor
 -- returned exactly INTERPOLATION_CONSTANT and lag compensation quietly did
 -- nothing at all. Nothing errored, no test failed -- the only reason it was
--- caught is that PingProbe printed the window and 0.100s was suspiciously
--- round.
+-- caught is that PingProbe (retired 2026-08-21) printed the window and 0.100s
+-- was suspiciously round.
 --
 -- STILL OPEN, and now known to be low-stakes: whether the figure is a full
 -- round trip or one way. The probe cannot separate them, because its own
@@ -162,7 +162,7 @@ function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHei
     -- This does NOT make the service care about ids: it still keys by the
     -- entity table and never reads the value. It requires only that the thing
     -- it is about to make hittable is something the rest of the game can name.
-    -- PingProbe's stub entity is what this was added for.
+    -- Added for a diagnostic's stub entity; it holds for every real one too.
     assert(entity.identity, "[SpatialService] entity has no Identity component")
 
     -- The buffer length is chosen by whoever built the component, but how

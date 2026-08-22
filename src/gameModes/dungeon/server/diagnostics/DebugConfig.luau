@@ -42,6 +42,15 @@ local FLAGS = {
     -- swing. Off by default: useful for one swing, unreadable for ten.
     SweepPath = false,
 
+    -- RETIRED 2026-08-21, with the files they switched (`_toDelete/`):
+    --   SweepTrace     per-wedge table. Went with the SWEEP default
+    --   LimbProbe      answered its question; finding is in HitDetection 9.6
+    --   EnemyAttacks   the whole enemy attack path, until PATH hitboxes exist
+    --
+    -- Listed rather than silently dropped because a flag that vanishes leaves
+    -- `workspace:SetAttribute("DebugSweepTrace", true)` sitting in someone's
+    -- command-bar history doing nothing, with no clue why.
+
     -- Draws hurtboxes from the SERVER'S copy of each body instead of welding
     -- them to it. On your own character the difference is the whole round trip
     -- made visible -- the overlay trails you by however far behind the server
@@ -55,9 +64,6 @@ local FLAGS = {
     -- with the numbers it was judged on.
     SwingReport = false,
 
-    -- Per-wedge table for a sweeping attack, printed when the swing ends.
-    -- Heavy -- one block per swing, several lines per wedge.
-    SweepTrace = false,
 
     -- One line per wedge as it fires. The noisy one.
     SweepWedges = false,
@@ -68,20 +74,6 @@ local FLAGS = {
     -- land, which reads as the swing being broken.
     AttackLog = true,
 
-    -- TEMPORARY, and ON despite being a log, because it exists to answer one
-    -- question and then be deleted: does a SERVER script see a limb move while
-    -- the CLIENT animates it? That decides whether a hitbox can be a welded
-    -- part the server records (`motion = LIVE`) or has to be a path recorded
-    -- at dev time (`motion = BAKED`) -- HitDetection.md Part 9.
-    --
-    -- Spawns a control rig and two markers on your right hand. Turn it off
-    -- once the answer is written down; leave it on and it prints a block every
-    -- three seconds forever.
-    LimbProbe = true,
-
-    -- ---- BEHAVIOUR: things that change the game ---------------------------
-    -- Dummies swing at whoever is nearest, on a timer.
-    EnemyAttacks = true,
 
     -- HP changes as they happen. Cheap and low-volume; the one log that
     -- earns being on by default.

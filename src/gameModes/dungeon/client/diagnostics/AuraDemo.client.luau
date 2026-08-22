@@ -9,7 +9,7 @@
 --
 -- A .client SCRIPT rather than a module, and safely so: this only OBSERVES and
 -- renders locally. It mutates nothing the test suite reads and nothing the
--- server can see, which is the same reason PingProbe is allowed to be a Script
+-- server can see, which is why a pure-observer diagnostic may be a Script
 -- while DummySpawner is not.
 --
 -- WHEN AURAS BECOME REAL, none of this survives -- a buff applies an aura,

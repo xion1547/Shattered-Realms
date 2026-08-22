@@ -1,6 +1,6 @@
 -- src/gameModes/dungeon/server/diagnostics/SwingReport.luau
 --
--- TEMPORARY, like PingProbe. One structured block per swing, so every stage
+-- TEMPORARY. One structured block per swing, so every stage
 -- of DETECT can be checked against what it was designed to do instead of
 -- inferred from whether a hit happened.
 --

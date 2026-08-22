@@ -51,7 +51,6 @@ local SpatialService = require(authority:WaitForChild("SpatialService"))
 local diagnostics = serverRoot:WaitForChild("diagnostics")
 local AttackDebug = require(diagnostics:WaitForChild("AttackDebug"))
 local SwingReport = require(diagnostics:WaitForChild("SwingReport"))
-local SweepTrace = require(diagnostics:WaitForChild("SweepTrace"))
 local DebugConfig = require(diagnostics:WaitForChild("DebugConfig"))
 
 -- The verbose per-swing breakdown lived here and is gone: it did its job on
@@ -395,7 +394,6 @@ function CombatService:OnAttack(player, event, _receivedAt)
         }
         self._nextSweepId += 1
         table.insert(self._sweeps, sweep)
-        SweepTrace.begin(sweep)
 
         -- Nothing is due yet -- the first wedge fires half a step in, at the
         -- middle of the span it covers. Called anyway so that a degenerate
@@ -499,9 +497,9 @@ function CombatService:_evaluateSweepSample(sweep, index: number)
         preferredId = sweep.preferredId,
     })
 
-    -- Recorded on the sweep so SweepTrace can rewind targets to the SAME
-    -- moment this sample resolved against. Reading `now` again there would
-    -- describe a different instant by a frame.
+    -- The moment this wedge resolved against, kept on the sweep so a
+    -- diagnostic can rewind targets to the SAME instant rather than reading
+    -- `now` again and describing a different one by a frame.
     sweep.lastAt = query.at
 
     local hits = TargetResolution.resolve(query)
@@ -535,19 +533,6 @@ function CombatService:_evaluateSweepSample(sweep, index: number)
             newlyCounted[entity] = true
             firstTouch += 1
         end
-    end
-
-    -- TEMPORARY. Everything the sample measured, recorded for the table
-    -- printed when the swing ends. Candidates are recomputed with the same
-    -- inputs the cull used, so misses are recorded too -- a trace of only the
-    -- hits cannot answer "why did that one miss".
-    local origin = TargetResolution.originOf(query)
-    if origin then
-        local window = math.max(0, workspace:GetServerTimeNow() - query.at)
-        local margin = TargetResolution.constants().maxEntitySpeed * window
-        local candidates = SpatialService:candidatesNear(
-            origin.Position, HitVolume.reach(volume), margin)
-        SweepTrace.sample(sweep, index, angle, origin, candidates, hits, newlyCounted)
     end
 
     if DebugConfig.get("SweepWedges") then
@@ -632,7 +617,6 @@ function CombatService:tick(_dt: number)
 end
 
 function CombatService:_finishSweep(sweep)
-    SweepTrace.finish(sweep)
 
     -- TEMPORARY, and where the loop over `sweep.order` into resolveAttack goes
     -- when RESOLVE lands. Announced at the END of the swing rather than per
