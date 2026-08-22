@@ -41,6 +41,8 @@ local EntityService = require(authority:WaitForChild("EntityService"))
 local SpatialService = require(authority:WaitForChild("SpatialService"))
 local EnemyEntity = require(serverRoot:WaitForChild("entities"):WaitForChild("EnemyEntity"))
 local EnemyTemplates = require(serverShared:WaitForChild("definitions"):WaitForChild("EnemyTemplates"))
+local HurtboxDefinitions = require(serverShared:WaitForChild("definitions")
+    :WaitForChild("HurtboxDefinitions"))
 
 local COUNT = 10
 
@@ -132,7 +134,8 @@ local function spawnDummy(index: number)
     entity.model = model
 
     EntityService:register(entity)
-    SpatialService:attach(entity, shaft, HURTBOX_RADIUS, HURTBOX_HALF_HEIGHT)
+    SpatialService:attach(entity, shaft, HURTBOX_RADIUS, HURTBOX_HALF_HEIGHT,
+        HurtboxDefinitions.DUMMY)
 end
 
 function DummySpawner.spawnAll()

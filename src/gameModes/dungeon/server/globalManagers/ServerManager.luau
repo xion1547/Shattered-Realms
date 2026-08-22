@@ -59,6 +59,8 @@ local EventRegistry = require(eventFolder:WaitForChild("EventRegistry"))
 local ServerStorage = game:GetService("ServerStorage")
 local serverShared = ServerStorage:WaitForChild("Shared")
 local ServerSignals = require(serverShared:WaitForChild("signal"):WaitForChild("SignalVocabulary"))
+local HurtboxDefinitions = require(serverShared:WaitForChild("definitions")
+    :WaitForChild("HurtboxDefinitions"))
 local SignalService = require(signalFolder:WaitForChild("SignalService"))
 local RemoteEventsManager = require(ReplicatedStorage:WaitForChild("remoteEvents"):WaitForChild("RemoteEventsManager"))
 local RemoteEventsEnum = require(ReplicatedStorage:WaitForChild("remoteEvents"):WaitForChild("RemoteEventsEnum"))
@@ -176,7 +178,8 @@ function ServerManager:_bindCharacter(player, entity)
     local function attach(character)
         local root = character:WaitForChild("HumanoidRootPart", 10)
         if root then
-            SpatialService:attach(entity, root, PLAYER_HURTBOX_RADIUS, PLAYER_HURTBOX_HALF_HEIGHT)
+            SpatialService:attach(entity, root, PLAYER_HURTBOX_RADIUS, PLAYER_HURTBOX_HALF_HEIGHT,
+                HurtboxDefinitions.PLAYER_R15)
 
             -- Printed on every respawn, not just the first: attach clears the
             -- history buffer, so this line is also the marker for "rewind has

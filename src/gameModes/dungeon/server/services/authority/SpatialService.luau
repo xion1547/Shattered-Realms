@@ -22,6 +22,10 @@
 -- detection -- anything that can be hit is by definition something that
 -- registered a hurtbox, and nothing else can ever be returned by a query.
 
+local ServerStorage = game:GetService("ServerStorage")
+local HurtboxComponent = require(ServerStorage:WaitForChild("Shared")
+    :WaitForChild("components"):WaitForChild("HurtboxComponent"))
+
 local SpatialService = {}
 
 -- Sampling rate. Roblox replicates character position at roughly 20Hz, so a
@@ -148,7 +152,22 @@ end
 -- or numbers (UserId), which is a distinction it has no reason to know.
 -- `halfHeight` is optional and defaults to a sphere, so every pre-capsule
 -- caller keeps working unchanged. See SpatialComponent:endpoints.
-function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHeight: number?)
+--
+-- `zones` IS OPTIONAL AND IS THE HITZONE LIST (HitDetection Part 7). When
+-- present it builds a HurtboxComponent onto the entity.
+--
+-- > TRANSITIONAL, AND DELIBERATELY SO. Right now TWO shapes describe the same
+-- > body: `radius`/`halfHeight` on the Spatial component, which is what
+-- > resolution still tests against, and `zones`, which only the overlay draws.
+-- > That is two sources of truth and it is not a state to leave standing.
+-- >
+-- > It exists for one step, on purpose: the zone numbers are eyeballed
+-- > (HurtboxDefinitions), and they get checked by LOOKING at them before
+-- > anything hits with them. When TargetResolution loops zones, the single
+-- > capsule and these two parameters go away together.
+function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHeight: number?,
+    zones: { any }?)
+
     assert(type(entity) == "table" and entity.spatial,
         "[SpatialService] entity has no Spatial component")
 
@@ -177,6 +196,14 @@ function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHei
         available, HISTORY_LENGTH, HISTORY_SECONDS, SAMPLE_HZ))
 
     entity.spatial:setAnchor(anchor, radius, halfHeight)
+
+    -- Rebuilt on every attach rather than only when absent, because attach is
+    -- also what runs on respawn -- and a body that came back a different shape
+    -- with a stale zone list is exactly the silent wrongness this layer
+    -- specialises in.
+    if zones then
+        entity.hurtbox = HurtboxComponent.new(zones)
+    end
 
     if not self._attached[entity] then
         self._attached[entity] = true

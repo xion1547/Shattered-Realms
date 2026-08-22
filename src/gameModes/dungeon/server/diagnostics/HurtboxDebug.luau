@@ -195,33 +195,71 @@ local function release(entity)
     HurtboxDebug._parts[entity] = nil
 end
 
+-- Draws ONE capsule: a ball at each end of the segment and a block spanning
+-- between them, which is exactly what a capsule is.
+--
+-- Returns the three parts so the caller can record them; a zero-length segment
+-- (a sphere zone, like a head) produces two coincident balls and no shaft, the
+-- same way `Overlap` handles it with no special case.
+local function drawCapsule(idPrefix: string, capA: Vector3, capB: Vector3, radius: number,
+    serverView: boolean, anchor: BasePart)
+
+    local diameter = radius * 2
+    local ball = Vector3.new(diameter, diameter, diameter)
+
+    local a = spawnPiece(idPrefix .. "_A", Enum.PartType.Ball,
+        ball, CFrame.new(capA), serverView, anchor)
+    local b = spawnPiece(idPrefix .. "_B", Enum.PartType.Ball,
+        ball, CFrame.new(capB), serverView, anchor)
+
+    local shaft = nil
+    local delta = capB - capA
+    local length = delta.Magnitude
+    if length > 0 then
+        -- A Part's Size.Z runs along its local -Z, which is where lookAt
+        -- points -- so a block of this length centred on the midpoint and
+        -- looking at capB spans exactly the segment.
+        shaft = spawnPiece(idPrefix .. "_shaft", Enum.PartType.Block,
+            Vector3.new(diameter, diameter, length),
+            CFrame.lookAt(capA + delta * 0.5, capB), serverView, anchor)
+    end
+
+    return a, b, shaft
+end
+
 -- Sized from the hurtbox, NOT from the body. Those are the two shapes this
 -- tool exists to let you compare, so deriving one from the other would erase
 -- the finding.
 --
--- IT READS `endpoints` RATHER THAN RECOMPUTING THEM. TargetResolution asks the
+-- IT READS `endpoints` RATHER THAN RECOMPUTING THEM. Resolution asks the same
 -- component the same question with the same method, so the overlay cannot
--- drift from the thing it is drawing -- which is the entire value of a debug
--- overlay and the first thing a hand-rolled copy would lose.
+-- drift from the thing it is drawing -- the entire value of a debug overlay and
+-- the first thing a hand-rolled copy would lose.
 --
--- WHEN HURTBOXES BECOME HITZONE LISTS, THIS FUNCTION IS THE WHOLE CHANGE.
--- Today a body carries ONE capsule, so this builds one set. Under
--- HitDetection.md §7.2 it becomes N capsules, each welded to its own rig part
--- -- so this grows a loop over the hitzone list and `pieces.all` grows with
--- it. Welding rather than teleporting is what makes that version cheap: six
--- capsules per player would otherwise be eighteen CFrame writes per body per
--- redraw, and now it is none.
+-- ============================================================================
+-- THIS NOW DRAWS THE ZONE LIST, and an earlier revision of this comment
+-- predicted it would be the whole change. It was.
+-- ============================================================================
+--
+-- `entity.hurtbox` is a HurtboxComponent holding N capsules; each zone's
+-- endpoints are computed against the body's ROOT pose. Welding rather than
+-- teleporting is what makes N affordable -- six capsules per player would
+-- otherwise be eighteen CFrame writes per body per redraw, and welded it is
+-- none.
+--
+-- FALLS BACK TO THE SPATIAL COMPONENT'S SINGLE CAPSULE when no hurtbox is
+-- attached, so anything not yet wired still draws something rather than
+-- silently vanishing from the overlay. A body that disappears from a debug
+-- view reads as "not attached", which would be a lie.
 local function build(entity, spatial, serverView: boolean)
     local pose = spatial:getCFrame()
     if not pose then
         return nil
     end
 
-    local capA, capB = spatial:endpoints(pose)
-    local diameter = spatial.radius * 2
-    local ball = Vector3.new(diameter, diameter, diameter)
     local anchor = spatial.anchor
     local id = tostring(entity.identity:getId())
+    local hurtbox = entity.hurtbox
 
     local pieces = {
         -- What this set was built FROM. The loop compares against these to
@@ -230,27 +268,38 @@ local function build(entity, spatial, serverView: boolean)
         anchor = anchor,
         radius = spatial.radius,
         halfHeight = spatial.halfHeight,
+        hurtbox = hurtbox,
+        zoneCount = hurtbox and hurtbox:zoneCount() or 1,
         serverView = serverView,
+        zones = {},
         all = {},
     }
 
-    pieces.capA = spawnPiece(string.format("HB_%s_A", id), Enum.PartType.Ball,
-        ball, CFrame.new(capA), serverView, anchor)
-    pieces.capB = spawnPiece(string.format("HB_%s_B", id), Enum.PartType.Ball,
-        ball, CFrame.new(capB), serverView, anchor)
-    table.insert(pieces.all, pieces.capA)
-    table.insert(pieces.all, pieces.capB)
+    local count = pieces.zoneCount
+    for index = 1, count do
+        local capA, capB, radius
 
-    local delta = capB - capA
-    local length = delta.Magnitude
-    if length > 0 then
-        -- A Part's Size.Z runs along its local -Z, which is where lookAt
-        -- points -- so a block of this length centred on the midpoint and
-        -- looking at capB spans exactly the segment.
-        pieces.shaft = spawnPiece(string.format("HB_%s_shaft", id), Enum.PartType.Block,
-            Vector3.new(diameter, diameter, length),
-            CFrame.lookAt(capA + delta * 0.5, capB), serverView, anchor)
-        table.insert(pieces.all, pieces.shaft)
+        if hurtbox then
+            capA, capB, radius = hurtbox:endpoints(index, pose)
+        else
+            capA, capB = spatial:endpoints(pose)
+            radius = spatial.radius
+        end
+
+        -- The zone's NAME goes in the part name, not just its index. When a
+        -- capsule is in the wrong place, "ArmLeft is too far out" is a sentence
+        -- you can act on; "zone 3" means opening this file to find out which
+        -- one that is.
+        local label = hurtbox and hurtbox:zoneName(index) or "Body"
+        local a, b, shaft = drawCapsule(
+            string.format("HB_%s_%s", id, label), capA, capB, radius, serverView, anchor)
+
+        pieces.zones[index] = { capA = a, capB = b, shaft = shaft }
+        table.insert(pieces.all, a)
+        table.insert(pieces.all, b)
+        if shaft then
+            table.insert(pieces.all, shaft)
+        end
     end
 
     HurtboxDebug._parts[entity] = pieces
@@ -260,11 +309,17 @@ end
 -- True when the existing overlay no longer describes the body it was built
 -- for. Cheap enough to run per entity per redraw, which is the point: it
 -- replaces the CFrame writes rather than adding to them.
-local function isStale(pieces, spatial, serverView: boolean): boolean
+--
+-- `hurtbox` is compared by IDENTITY, not by contents. attach rebuilds the
+-- component on every respawn, so a new component object means a body that may
+-- be a different shape -- and comparing contents would be both slower and
+-- wrong the moment two bodies share a definition table.
+local function isStale(pieces, spatial, serverView: boolean, hurtbox): boolean
     return pieces.serverView ~= serverView
         or pieces.anchor ~= spatial.anchor
         or pieces.radius ~= spatial.radius
         or pieces.halfHeight ~= spatial.halfHeight
+        or pieces.hurtbox ~= hurtbox
         -- Destroyed out from under us: a respawn took the character, and with
         -- it the welded pieces parented to its root.
         or pieces.all[1].Parent == nil
@@ -272,19 +327,27 @@ end
 
 -- ServerView only. Rewrites the pose from the server's copy of the body, which
 -- is the whole point of the mode -- see the header.
-local function reposition(pieces, spatial)
+local function reposition(pieces, spatial, hurtbox)
     local pose = spatial:getCFrame()
     if not pose then
         return
     end
 
-    local capA, capB = spatial:endpoints(pose)
-    pieces.capA.CFrame = CFrame.new(capA)
-    pieces.capB.CFrame = CFrame.new(capB)
+    for index, zone in ipairs(pieces.zones) do
+        local capA, capB
+        if hurtbox then
+            capA, capB = hurtbox:endpoints(index, pose)
+        else
+            capA, capB = spatial:endpoints(pose)
+        end
 
-    if pieces.shaft then
-        local delta = capB - capA
-        pieces.shaft.CFrame = CFrame.lookAt(capA + delta * 0.5, capB)
+        zone.capA.CFrame = CFrame.new(capA)
+        zone.capB.CFrame = CFrame.new(capB)
+
+        if zone.shaft then
+            local delta = capB - capA
+            zone.shaft.CFrame = CFrame.lookAt(capA + delta * 0.5, capB)
+        end
     end
 end
 
@@ -298,8 +361,10 @@ local function refresh(entity, serverView: boolean)
         return
     end
 
+    local hurtbox = entity.hurtbox
+
     local pieces = HurtboxDebug._parts[entity]
-    if pieces and isStale(pieces, spatial, serverView) then
+    if pieces and isStale(pieces, spatial, serverView, hurtbox) then
         release(entity)
         pieces = nil
     end
@@ -310,7 +375,7 @@ local function refresh(entity, serverView: boolean)
 
     -- Welded pieces need nothing here. That absence is the fix.
     if pieces and serverView then
-        reposition(pieces, spatial)
+        reposition(pieces, spatial, hurtbox)
     end
 end
 
@@ -367,13 +432,20 @@ function HurtboxDebug.start()
     end)
 
     print(string.format(
-        "[HurtboxDebug] armed at %dHz (flag Debug%s) -- the glowing volume is "
-            .. "what you actually hit, the model is only what you see",
-        REDRAW_HZ, FLAG))
+        "[HurtboxDebug] armed at %dHz (flag Debug%s) -- drawing the ZONE LIST, "
+            .. "welded, so it cannot trail you", REDRAW_HZ, FLAG))
+
+    -- STATED OUT LOUD BECAUSE IT IS TEMPORARILY TRUE AND WILL NOT BE FOR LONG.
+    -- This line used to read "the glowing volume is what you actually hit",
+    -- which stopped being true the moment zones were drawn while resolution
+    -- still tested the single capsule. A diagnostic that overstates what it is
+    -- showing is worse than no diagnostic, and this one is being read
+    -- specifically to decide whether the zone numbers are any good.
+    print("    NOTE: resolution still tests the OLD single capsule. These zones "
+        .. "are drawn to be CHECKED, not to be hit with -- HitDetection 0.5.")
     print(string.format(
-        "    welded to the body, so it cannot trail you. Debug%s draws the "
-            .. "SERVER's copy instead -- the gap it opens up is the round trip "
-            .. "rewind exists to undo.", SERVER_VIEW_FLAG))
+        "    Debug%s draws the SERVER's copy instead -- the gap it opens up is "
+            .. "the round trip rewind exists to undo.", SERVER_VIEW_FLAG))
 end
 
 function HurtboxDebug.stop()
