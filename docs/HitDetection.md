@@ -90,7 +90,7 @@
 13. The File Map
 14. Current State
 15. Known Gaps
-16. Rejected Designs, And The Three Reversals
+16. Rejected Designs, And The Reversals
 17. Naming
 
 ---
@@ -519,8 +519,13 @@ slash.
 
 ## Part 9 — Motion — Where The Transform Comes From
 
-**Status:** DESIGNED. `STATIC` and `SWEEP` are **BUILT**; `BAKED` and
-`PROJECTILE` are **UNBUILT**. This Part is the reframe.
+**Status:** DESIGNED. `STATIC` and `SWEEP` are **BUILT**; `PATH`, `PROJECTILE`
+and `LIVE` are **UNBUILT**. This Part is the reframe.
+
+> **DECIDED 2026-08-21: `PATH` (9.4) is the model for weapon attacks.** `LIVE`
+> (9.6) was the leading alternative and is kept in full as the fallback, along
+> with the measurement that settled it. `SWEEP` is not deprecated — it stays as
+> the cheap option for volumes that genuinely are a rotating fan.
 
 ### 9.0 — The question every previous revision skipped
 
@@ -536,22 +541,29 @@ is one, and naming it is what makes the rest of this Part possible.
 **Make it a field, and four things that were separate problems become one
 problem.**
 
-### 9.1 — The four motion kinds
+### 9.1 — The five motion kinds
 
 ```lua
-motion = "STATIC" | "SWEEP" | "BAKED" | "PROJECTILE"
+motion = "STATIC" | "SWEEP" | "PATH" | "PROJECTILE" | "LIVE"
 ```
 
 | `motion` | The transform at step *n* | Cost | For |
 |---|---|---|---|
 | `STATIC` | fixed at the origin | cheapest | explosions, ground AoE, breath cones |
 | `SWEEP` | rotate by a formula | cheap | horizontal slashes. Today's model |
-| `BAKED` | **look it up in a recorded path** | one table read | anything where the art defines the shape |
+| **`PATH`** | **evaluate an authored path** | **one lerp** | **weapons. THE DEFAULT** |
 | `PROJECTILE` | translate over time | cheap | ranged attacks, travelling shapes |
+| `LIVE` | read a welded part's CFrame each tick | a CFrame read | **held in reserve** — 9.6 |
 
 **Every one of them feeds the identical overlap math and the identical rewind.**
 What differs is only how a `CFrame` is produced — computed from a formula, or
-read from a table.
+read from a table, or observed.
+
+> **An earlier draft of this Part listed `BAKED` as a separate kind, meaning "a
+> path recorded off a rig at dev time." That was a category error: recording a
+> rig is an *authoring method*, not a runtime behaviour.** Hand-authoring a path
+> and generating one by recording a weapon produce the identical artifact and
+> the identical runtime code. Both are `PATH`. See 9.4.2.
 
 ### 9.2 — `STATIC`
 
@@ -586,52 +598,123 @@ express at any sample count.
 stays in the plane the attacker is standing in. It is also, today, the entire
 limit of what `SWEEP` can express — see Part 15.
 
-### 9.4 — `BAKED` — the path recorded from the animation
+### 9.4 — `PATH` — an authored path, evaluated over time
 
-**Status:** DESIGNED, UNBUILT. This is the new capability and the reason for
-the reframe.
+**Status:** DESIGNED, UNBUILT. **The chosen model for weapon attacks**, and the
+reason the rest of this Part exists.
+
+**The hitbox is its own object with its own authored motion.** Not welded to a
+bone, not derived from a formula — a volume travelling a path someone placed by
+hand, anchored to the attacker's root.
 
 ```
-DEV TIME, in Studio:
-  play the swing on the rig
-  sample the blade part's CFrame RELATIVE TO THE ROOT, every frame
-  write it to a Lua table in the repo
+AUTHORING          move a part through the swing in the Conductor, watching it
+                   against the rig clip on one shared transport
 
-RUNTIME, on the server:
-  anchor that path to the attacker's CURRENT root CFrame and facing
-  walk it, testing overlap at each step, rewinding targets as it goes
+STORAGE            a track in the Score -- a list of { t, CFrame }
+
+RUNTIME (server)   transformAt(n) = rootCFrame * evaluate(track, t)
+                   one lerp between two keys. Cheaper than SWEEP's trig
 ```
 
-**What this buys, and why it is not a nicety:**
+#### What it buys
 
 | | |
 |---|---|
-| **The shape is the animation** | retime or re-author the swing, re-bake, done. There is no `sweep = 160` to keep honest |
-| **Any motion at all** | X slashes, diagonals, overheads, spirals, thrusts. None of them need an engine change |
-| **The server holds the path** | the client cannot touch it. No new trust, no validation to write |
-| **It is a diff** | a re-baked path is a file change a reviewer can see. This is the objection that sank the previous attempt, and baking answers it |
-| **Limb replication is irrelevant** | the path anchors to the **root**, which replicates like any part. Nothing reads the sword at runtime |
+| **Authored by eye, not by number** | `sweep = 160` cannot be judged by looking at it — it is tuned by swinging, missing, and guessing. A part you can drag and watch against the blade can be judged. **This is the argument that decided it** |
+| **Any motion at all** | diagonals, overheads, X slashes, spirals, arcing thrusts. `SWEEP` expresses exactly one of these |
+| **No network in the loop** | the path is local data. Nothing about it replicates, so nothing about it can diverge — 9.6 measured what happens when something does |
+| **Deterministic** | same input, same path, every time. A physics read is not |
+| **The client cannot influence it** | the server evaluates its own copy. No bounds check to write, no trust to spend |
+| **Cheaper than today** | a lerp between two keys, against `CFrame.lookAt` plus an angle rotation |
 
-That last row deserves its own paragraph, because it is the one that is easy to
-miss. **When an animation plays, the Animator writes the joint's `Transform`,
-and `Transform` is not replicated.** For a player, the client plays the
-animation, so the server's copy of their sword may never move at all. Any
-design that reads the weapon's live pose inherits that problem. **A baked path
-never reads the weapon.** It reads a table and a root CFrame, and the root
-CFrame is ordinary replicated part movement.
+#### 9.4.1 — The drift risk, named because it is the one real cost
 
-**The cost, stated honestly:**
+**The blade you SEE comes from the rig animation. The hitbox comes from a
+separate track.** Re-author the swing so the blade passes lower, and the hitbox
+does not know.
 
-| Cost | Mitigation |
-|---|---|
-| A dev-time recording step per clip | the same *kind* of step as uploading the animation itself |
-| "Make the slam more generous" is no longer a number edit | inflate the volume's `radius` against the same path. Fattening the blade does not need re-animating |
-| The path is data with no schema enforcement in Studio | boot validation: step count, monotonic time, bounded reach |
-| Re-baking is manual and forgettable | a stale path is a **silent** wrong — Part 15 |
+That is the same two-numbers-in-two-places problem this document keeps closing,
+reappearing one level up. Not fatal, and not free.
 
-**Baking is where `sweep` was always heading.** `sweep` is a *formula* that
-approximates one specific motion — a horizontal rotation about the attacker's
-Y. A baked path is the same idea with the approximation removed.
+**Two things blunt it:**
+
+1. **They are authored against each other, on one transport.** The Conductor
+   previews the rig clip and the hitbox track together, so a mismatch is visible
+   while you are making it rather than discovered in a playtest.
+2. **Recording the rig generates a track** (9.4.2), which removes the authoring
+   gap entirely for anyone who wants it removed.
+
+**The test that catches a bad version of this:** can a designer change an
+attack's reach without touching the animation? Under `PATH`, yes — inflate the
+volume's `radius` against the same path. If that answer ever becomes "re-animate
+it," this has drifted into the thing 16.1 rejected.
+
+#### 9.4.2 — Recording a rig is an authoring method, not a motion kind
+
+An earlier draft of this Part called this `BAKED` and listed it beside `SWEEP`
+as though it were a different runtime behaviour. **It is not.** Play the swing
+in Studio, sample the weapon part's CFrame relative to the root each frame,
+write the list into a track — and what comes out is **a `PATH` track, identical
+in every respect to one placed by hand.**
+
+| Authoring route | Good for | Cost |
+|---|---|---|
+| **Hand-placed in the Conductor** | tuning reach and feel independently of the art | can drift from the visual (9.4.1) |
+| **Recorded off the rig** | guaranteeing the hitbox *is* the blade | must be re-recorded when the animation changes, **and forgetting is silent** |
+
+Both are supported, both are chosen per attack, and **nothing downstream can
+tell which was used** — the same property that makes the three hurtbox
+authoring routes interchangeable (7.3).
+
+#### 9.4.3 — Walking while attacking
+
+The path is authored **relative to the attacker's root**, and the root is
+re-read at **every step** rather than captured once when the swing begins.
+
+**Per step, not once.** Anchor at the swing's start and the hitbox stays behind
+while the player walks out of it — the swing lands where they used to be. Per
+step and it travels with them, which is what it looks like on screen.
+
+Not new machinery: `_origin` already reads the attacker's live pose for every
+wedge, for the same reason.
+
+**The animation side needs nothing from this system.** An upper-body attack over
+a walk cycle is `AnimationPriority` — `Action` outranks `Movement`, so arms
+swing while legs walk. Roblox's layering handles it.
+
+#### 9.4.4 — Tunneling, and the rate that prevents it
+
+A path sampled at discrete ticks leaves the space between ticks untested. The
+criterion is exact:
+
+> **Tunneling is impossible while the hitbox moves less than the smallest
+> hurtbox radius per tick.** If the gap is narrower than the target, the target
+> cannot fit inside it.
+
+`BASIC_SWING` is a 6.5-stud blade through 160° in 0.40s, so the tip travels
+~18 studs in 0.4s ≈ **45 studs/second**:
+
+| Tick rate | Tip travel per tick | Against a 1.5-radius hurtbox |
+|---|---|---|
+| 30Hz | 1.50 studs | **exactly at the limit — marginal** |
+| **60Hz** | **0.75 studs** | safe, 2× margin |
+
+**So a `PATH` is evaluated at 60Hz, not the 30Hz the spatial sampler uses.**
+They are different rates for different jobs and that is deliberate: the sampler
+records where bodies were, and 30Hz is plenty for a body; the driver decides
+where a blade is, and a blade is the fastest thing in the game.
+
+> **THIS INTERACTS WITH THE HITZONE LIST AND THE INTERACTION IS EASY TO MISS.**
+> Today a body is one capsule of radius 1.5. Split it into six limb capsules
+> (7.1) and some of those have radius ~0.3 — at which point 0.75 studs per tick
+> **does** tunnel. **Finer hurtboxes require a faster driver**, and the failure
+> is a hand that silently cannot be hit.
+>
+> The alternative, if the rate ever gets uncomfortable, is the same trick
+> `SWEEP` already uses: test the volume **spanning** tick *n* to tick *n+1*
+> rather than the pose at each. A capsule from A to B is math `Overlap` already
+> has.
 
 ### 9.5 — `PROJECTILE` — and why it is not rewound
 
@@ -662,7 +745,76 @@ sphere at current.** A fast projectile jumps between ticks and will pass
 straight through a body. This is the same tunneling problem `SWEEP` solves with
 wedges, and it uses overlap math that already exists.
 
-### 9.6 — One driver, four sources — and why this is not "two engines"
+### 9.6 — `LIVE` — the fallback, and the measurement that made it one
+
+**Status:** DESIGNED, UNBUILT, **DELIBERATELY NOT CHOSEN.** Recorded in full
+because it is the fallback if `PATH` disappoints, and because the measurement
+behind the decision is worth keeping.
+
+**The design:** weld an invisible proxy part where the blade sweeps. It joins
+the body's physics assembly, so it rides the animation for free — no per-frame
+writes, no code moving it. The server records its CFrame each tick into history
+and rewinds that history exactly like a hurtbox.
+
+**Its genuine advantage over `PATH`, and the reason it is kept rather than
+deleted: it follows motion an authored path cannot.** IK correcting a swing
+toward a target's real position, blending softening a transition, physics
+deflecting a blade — the welded part follows all of it. A path does not.
+
+#### MEASURED 2026-08-21 — `diagnostics/LimbProbe.luau`
+
+The question was whether a server script can see a limb move while the **client**
+plays the animation. Three revisions of the probe were needed, and the first two
+were wrong in instructive ways:
+
+| Rev | Measured | Why it could not answer |
+|---|---|---|
+| v1 | range of motion on each side, subtracted | the two windows covered different seconds of a **non-repeatable input** (walking). The difference measured the walking |
+| v2 | client reports a pose stamped with server time; server rewinds to it and subtracts | correct in shape, **assumed the clocks agree**. A 50ms stamp error manufactures ~0.33 studs out of a healthy system |
+| v3 | searches a range of offsets, keeps the best match | the shift is the skew; the residual at that shift is the fidelity |
+
+**What it found:**
+
+| | |
+|---|---|
+| Does the server see a client-animated limb move? | **Yes**, unambiguously |
+| Does a welded proxy ride it exactly? | **Yes** — proxy and limb reported identical figures |
+| Is the joint a `Motor6D`? | **No — `AnimationConstraint`.** Avatar Joint Upgrade is enabled on this place |
+| How far behind is the server's live view? | best-match offsets of −0.150, −0.050, −0.170, −0.045 → **mean ≈ 0.104s** |
+
+**That last number is the finding.** `INTERPOLATION_CONSTANT` is **0.100s**. The
+server's live view of a limb trails by almost exactly the interval Part 6 says
+client-visible state trails by. **That is the design working, not failing** — and
+it is precisely what rewind exists to undo.
+
+**Two flaws in the probe, recorded so the numbers are not over-trusted:**
+
+- The error was reported as a fraction of the limb's **cumulative path length**
+  over the window (~34 studs of accumulated wiggle), which is meaningless. It
+  should be against the swing's amplitude.
+- The alignment picks the best offset **independently per report**, taking the
+  minimum of a noisy signal forty times and averaging the minima. That biases
+  the residual **downward**, so the true figure is worse than the 0.19–0.38
+  studs printed.
+
+#### Why this did not decide it
+
+**Because `PATH` does not depend on any of it.** The trail is real, expected, and
+already handled — but a path anchored to the root never reads a limb, so there is
+nothing for it to inherit. The probe's value was in removing an unknown, not in
+choosing a design.
+
+**`LIVE` remains correct and fully trustworthy for server-owned rigs**, where the
+server plays the animation and reads its own parts with no replication in the
+loop. If a boss ever needs IK-corrected contact, that is where this comes back.
+
+> **UNTESTED AND NAMED AS SUCH:** the probe's control rig has its joint written
+> **directly by a script**, not by an `Animator`. The client sees that control as
+> completely static — correct behaviour, since a scripted `Transform` write does
+> not replicate in either direction. So **a server-animated boss remains
+> unmeasured**, and needs one real uploaded animation to settle.
+
+### 9.7 — One driver, several sources — and why this is not "two engines"
 
 The previous revision rejected running two detection systems side by side —
 live built-in queries for cheap cases, buffer math for compensated ones — on
@@ -672,8 +824,9 @@ stands, and this is not that.**
 ```
                     ┌─ STATIC      → the origin, unchanged
 transformAt(n) ─────┼─ SWEEP       → origin * Angles(0, θ(n), 0)
-     │              ├─ BAKED       → origin * path[n]
-     │              └─ PROJECTILE  → origin + direction * speed * t(n)
+     │              ├─ PATH        → origin * evaluate(track, t(n))
+     │              ├─ PROJECTILE  → origin + direction * speed * t(n)
+     │              └─ LIVE        → the proxy part's recorded CFrame
      ▼
   Overlap.test(transform, volume, capA, capB, radius)     ← ONE function
      ▼
@@ -687,7 +840,7 @@ this a hit"; this has one, reached four ways.
 The test that distinguishes them: *if I fix a bug in the overlap math, how many
 places do I change?* Two engines: two. This: one.
 
-### 9.7 — Wedges — closing the gap between steps
+### 9.8 — Wedges — closing the gap between steps
 
 **Status:** BUILT for `SWEEP`.
 
@@ -749,12 +902,12 @@ wrong.
 | Each wedge is evaluated at the **middle** of its time span | the wedge covers its whole span whichever moment it fires; the timing decides where the *targets* are |
 | The wedge is widened by the blade's own thickness | a blade of radius `r` looks wider nearer the pivot, so there is no single right number. Measured at half the blade's length: representative, and it errs generous |
 
-**This generalizes to `BAKED` and `PROJECTILE` unchanged.** A baked path is
+**This generalizes to `PATH` and `PROJECTILE` unchanged.** An authored path is
 sampled at discrete frames, so the gaps between frames still need covering —
 by the capsule from step *n* to step *n+1*. A projectile needs the same. **The
 wedge is the rotational case of a swept volume; it is not special.**
 
-### 9.8 — How it actually runs — the stopwatch
+### 9.9 — How it actually runs — the stopwatch
 
 **Status:** BUILT.
 
@@ -779,7 +932,7 @@ same answer repeatedly. That path applies only to instantaneous volumes, and
 `samples > 1` is rejected on moving volumes specifically so the two can never
 both run.
 
-### 9.9 — Windows, beats, and where timing comes from
+### 9.10 — Windows, beats, and where timing comes from
 
 **Status:** DESIGNED, UNBUILT. This is the seam to the animation work.
 
@@ -866,7 +1019,7 @@ resolve at `at = now`, so the built-ins genuinely are usable in that direction:
 ### 10.1 — What this does *not* forbid
 
 **Recording a part's motion is not the same as testing against a part.** Part
-9.4's baked path is produced by watching a real part move in Studio — at dev
+9.4's PATH track may be produced by watching a real part move in Studio — at dev
 time, once, into a table. At runtime there is no part, no physics, and no query.
 
 The rejection is of **Parts as the test mechanism**. It was never a rejection of
@@ -955,8 +1108,8 @@ precisely because it is the one that skips the work.
 
 ### 12.1 — Client-authored hitbox positions — held in reserve, not rejected
 
-Under `BAKED`, the client never supplies a hitbox position, so the question does
-not arise for authored attacks. It returns only for motion a baked path cannot
+Under `PATH`, the client never supplies a hitbox position, so the question does
+not arise for authored attacks. It returns only for motion an authored path cannot
 capture: procedurally adjusted swings, IK correcting to a target's real
 position, physics-affected blades.
 
@@ -1012,7 +1165,7 @@ is not duplicated here; this is the shape of it.
 | One capsule per entity | **BUILT — and it is the placeholder, not the design** |
 | `HurtboxComponent`, the hitzone list | **UNBUILT.** This is the next real work on the hurtbox side |
 | `motion` as a field | **UNBUILT.** Currently implied by `sweep` |
-| `BAKED`, `PROJECTILE` | **UNBUILT** |
+| `PATH`, `PROJECTILE`, `LIVE` | **UNBUILT.** `PATH` is the chosen model — 9.4 |
 | Beats | **UNBUILT**, and blocked on the Score existing |
 | Enemy attacks | **never run.** No enemy has attacked |
 
@@ -1025,10 +1178,10 @@ Each named so it is not mistaken for an oversight.
 | Gap | Why acceptable now | Trigger to fix |
 |---|---|---|
 | **One enveloping hurtbox per entity** | **This is a bug, not a gap.** The space between a large enemy's limbs is hittable, and the player capsule is ~2.5× too wide horizontally | Available now. The ten dummies are enough — do not wait for a boss |
-| **`SWEEP` rotates about Y only** | Every attack so far is a horizontal fan | The first diagonal or overhead slash. Either a `sweepAxis` field, or `BAKED` makes it moot |
+| **`SWEEP` rotates about Y only** | Every attack so far is a horizontal fan | The first diagonal or overhead slash. Either a `sweepAxis` field, or `PATH` makes it moot |
 | **One window per activation** | No attack has needed two | The first X or multi-beat attack. `_sweeps` must hold several per activation |
 | **No start delay** | Every window opens on arrival | The first delayed attack. A beat is the field |
-| **A stale baked path is silent** | Nothing is baked yet | Boot validation comparing path metadata against the clip it came from |
+| **A stale recorded PATH is silent** | Nothing is recorded yet, and hand-authored tracks do not have this failure | Boot validation comparing a recorded track against the clip it came from (9.4.2) |
 | **Enemy sweeps collapse to one instant** | Never surfaced — no enemy has attacked | The first enemy attack with a window. Needs the stopwatch on that direction |
 | **Sweep steps 2..N over-rewind by one one-way latency** | Every step calls `viewTimeFor`, which returns `2L + I` — the correction for the *click*. Mid-swing the client is only `L + I` behind. Invisible at localhost; grows with ping and swing length | A playtest at real latency where a swing's later half feels laggy. **The fix needs deciding rather than assuming** — resolving the whole swing against the click's picture is also defensible |
 | **Ping read fresh per swing, never smoothed** | One spiking sample widens that swing's rewind and nothing else's, and nothing can inspect a player's latency history when a hit is disputed | Planned: a measured, smoothed ping as a component on the player entity |
@@ -1036,15 +1189,15 @@ Each named so it is not mistaken for an oversight.
 | No spatial partitioning | Linear scan is microseconds at design scale | Broadphase appears in a profile, or ~500 attached entities |
 | Line of sight unimplemented | The flag exists; no map has cover that matters | The first arena with pillars |
 | Nothing registers with `SpatialService` except players and dummies | `EnemyEntity` is not constructed anywhere | Whatever spawns enemies gets written |
-| Does the server see a player's animated limb move? | **OPEN.** Stakes dropped sharply under `BAKED`, which never reads a limb | Ten-minute test. Only decides whether *runtime* recording is available as a fifth motion source |
+| ~~Does the server see a player's animated limb move?~~ | **CLOSED 2026-08-21 — yes, trailing by ~0.104s, which is the interpolation constant.** Does not affect `PATH`, which never reads a limb. See 9.6 | — |
 
 ---
 
-## Part 16 — Rejected Designs, And The Three Reversals
+## Part 16 — Rejected Designs, And The Reversals
 
 Each kept with the **test** that catches it, not the narrative of who said what.
 
-### 16.1 — The three reversals
+### 16.1 — The reversals
 
 These are decisions this document previously made and now unmakes. They are
 recorded at length because each was argued in full and sounded correct.
@@ -1076,6 +1229,47 @@ formula that happens to fit the first attack that was built.
 > *The test that keeps the rejection alive for the runtime version: does the
 > server read the rig during resolution? If yes, it inherits `Transform`
 > replication and client ownership. If no, it is baking, and neither applies.*
+
+---
+
+**~~`BAKED` is a motion kind alongside `SWEEP`.~~ FOLDED INTO `PATH`
+2026-08-21.**
+
+Listing it beside `SWEEP` implied it was a different runtime behaviour. It is
+not — recording a rig and hand-placing keyframes produce **the same artifact and
+the same runtime code**. A path is a path. Recording is one way to author one.
+
+The error is worth keeping because it is a recurring shape: *a way of producing
+data got listed as a way of consuming it.* Both routes are now 9.4.2, chosen per
+attack, and nothing downstream can tell them apart.
+
+> *The test: would the engine execute different code? If no, it is not a
+> separate kind.*
+
+---
+
+**~~The hitbox rides the rig.~~ SET ASIDE 2026-08-21 in favour of `PATH`.**
+
+`LIVE` — a proxy part welded to the weapon, its position recorded per tick — was
+the leading design for most of a day and is **not rejected**. It is kept in full
+at 9.6 as the fallback, because it does one thing `PATH` cannot: **follow motion
+that is not authored**, such as IK correcting a swing toward a target's actual
+position.
+
+**Why it lost, in one line: it puts the network in the loop and `PATH` does
+not.** `LimbProbe` measured the server's live view of a client-animated limb
+trailing by ≈0.104s against an `INTERPOLATION_CONSTANT` of 0.100s — the design
+working exactly as Part 6 says it should, and an inheritance `PATH` simply never
+takes on. `PATH` is also deterministic, cheaper than the trig it replaces, and
+impossible for a client to influence.
+
+**It remains correct and fully trustworthy for server-owned rigs**, where the
+server plays the animation and reads its own parts with nothing replicating in
+between.
+
+> *The trigger to revisit: an attack whose contact point must adapt at runtime —
+> a boss whose foot has to land on a player wherever they actually are. An
+> authored path cannot express that and a welded proxy can.*
 
 ---
 
@@ -1120,7 +1314,7 @@ recording a part's motion at dev time (Part 10.1).
 **Two engines: live built-in queries for cheap cases, buffer math for
 compensated ones.** Two code paths that must agree and will drift. The buffer
 engine subsumes the live one — a rewind of zero is the newest sample. *The test:
-fixing a bug in the overlap math touches how many files?* Part 9.6's four
+fixing a bug in the overlap math touches how many files?* Part 9.7's five
 motion kinds are explicitly **not** this: one overlap function, one rewind, four
 `CFrame` suppliers.
 
@@ -1184,8 +1378,8 @@ stages; `HitboxSystem` implies attacks own it, and the first hazard would feel
 like a hack.
 
 `motion`, not `path` or `drive` — it is a property of how the volume *moves*,
-and `path` is already what a `BAKED` motion's data is called. `motion = BAKED`
-reads as a sentence; `path = BAKED` reads as a category error.
+and a track's data is what a `PATH` motion reads. `motion = PATH`
+reads as a sentence; `path = PATH` reads as a stutter.
 
 **The document is called Hit Detection because that is what someone looking for
 it will search for.**
