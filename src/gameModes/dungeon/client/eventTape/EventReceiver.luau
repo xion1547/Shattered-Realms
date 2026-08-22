@@ -30,6 +30,10 @@ function EventReceiver.new(remote, pending)
         _pending = pending,
         _connection = nil,
         _pushHandlers = {},   -- eventType -> fn(payload)
+
+        -- eventType -> true, once it has been reported as unhandled. See
+        -- _onPush: the note is worth printing, the repetition is not.
+        _warnedUnhandled = {},
     }, EventReceiver)
 end
 
@@ -124,8 +128,19 @@ function EventReceiver:_onPush(message)
         return
     end
 
-    -- Unhandled pushes are expected while the display layer is unbuilt.
-    print("[EventReceiver] unhandled push:", tostring(message.eventType))
+    -- Unhandled pushes are expected while the display layer is unbuilt -- but
+    -- ONCE PER EVENT TYPE, not once per push. A server that pushes on a timer
+    -- turns a useful "nothing is listening to this yet" note into a line every
+    -- few frames, which drowns the output it was meant to help you read.
+    --
+    -- The fact worth reporting is "COMBAT has no handler", and that fact does
+    -- not change between pushes.
+    if not self._warnedUnhandled[message.eventType] then
+        self._warnedUnhandled[message.eventType] = true
+        print(string.format(
+            "[EventReceiver] no push handler for '%s' -- further ones stay quiet",
+            tostring(message.eventType)))
+    end
 end
 
 return EventReceiver

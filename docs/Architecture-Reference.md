@@ -1662,6 +1662,33 @@ change. The cache entry stores the versions at time of computation. On the next
 read, StatService compares versions. If anything changed, it recomputes. No
 explicit invalidate calls needed anywhere. Misses are impossible.
 
+### This Pattern Has A Second Instance — Hit Volumes
+
+Worth flagging here rather than only where it is used, because the pattern is
+this section's and the instance is easy to miss.
+
+**A skill's hit volume composes exactly the way a stat does.** A longsword that
+reaches three studs further and swings fifteen percent slower does not get its
+own `CLEAVE` — it contributes a modifier, the same way it contributes to attack
+power:
+
+```
+StatService.compute(entity, "attack")     = base + equipment + buffs + level
+SkillService.volumeFor(entity, "CLEAVE")  = base volume, modified by
+                                            equipment and buffs
+```
+
+Same composition, same version-stamped cache, same reason. A skill per weapon
+is Part 8's per-currency-Service mistake in different clothes: the list grows
+with the *product* of skills and weapons, and the entries drift apart one
+balance pass at a time.
+
+`HitDetection.md` §8.4 carries the full design — the closed modifier
+vocabulary, and which volume fields may be modified at all. The short version
+of that second half is worth repeating because it is not obvious: **a weapon
+may change how long an attack lasts, and may not change the arc it sweeps.**
+An animation player can stretch a clip in time; it cannot stretch it in angle.
+
 ---
 
 ## Part 8 — The Resource System — Why EconomyService Was Wrong

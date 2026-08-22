@@ -48,10 +48,14 @@ function InputSystem:start()
         if processedByUI then
             return
         end
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then
-            return
+
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            self:_attack(CombatEvent.SubType.MELEE, "swing")
+        elseif input.KeyCode == Enum.KeyCode.One then
+            self:_attack(CombatEvent.SubType.AOE, "cleave")
+        elseif input.KeyCode == Enum.KeyCode.Two then
+            self:_attack(CombatEvent.SubType.RANGED, "thrust")
         end
-        self:_swing()
     end)
 end
 
@@ -62,9 +66,22 @@ function InputSystem:stop()
     end
 end
 
-function InputSystem:_swing()
+-- THREE BINDS, THREE VOLUME SHAPES, and the second and third are TEMPORARY.
+--
+--   click  MELEE   the arc         the real attack
+--   1      AOE     a wide box      a horizontal cleave, to exercise BOX
+--   2      RANGED  a long capsule  a forward thrust, to exercise CAPSULE
+--
+-- The subtypes are borrowed rather than fitted: a thrust is not really
+-- "RANGED". They exist so the server can tell the three apart without a new
+-- event type, and they go away with the mock volumes in CombatService.
+--
+-- THIS FILE STILL KNOWS NOTHING ABOUT SHAPE. It sends "I pressed 1"; which
+-- volume that means lives on the server, where the reach and the size stay
+-- out of a client's reach (Part 13).
+function InputSystem:_attack(subType: string, label: string)
     local builder = EventFactory.create(CombatEvent)
-        :withSubType(CombatEvent.SubType.MELEE)
+        :withSubType(subType)
 
     local targetId = self:_pointedAtId()
     if targetId then
@@ -74,11 +91,11 @@ function InputSystem:_swing()
     -- sendNow rather than queue: batching saves a remote call per frame, and
     -- an attack is precisely the input where a frame of added latency costs
     -- more than the call does.
-    local eventId = self._eventTape:sendNow(builder:build(), "swing")
+    local eventId = self._eventTape:sendNow(builder:build(), label)
 
     if VERBOSE then
-        print(string.format("[InputSystem] swing sent  event=%s  pointingAt=%s",
-            tostring(eventId), targetId and tostring(targetId) or "nothing"))
+        print(string.format("[InputSystem] %s sent  event=%s  pointingAt=%s",
+            label, tostring(eventId), targetId and tostring(targetId) or "nothing"))
     end
 end
 

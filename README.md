@@ -13,6 +13,10 @@ made once instead of re-derived.
 | [Client-Architecture.md](docs/Client-Architecture.md) | **How the client is built.** Widgets, bindings, presenters, prediction. The server document stays authoritative for anything crossing the wire. |
 | [EventTape.md](docs/EventTape.md) | **The implementation map for the EventTape layer.** File map, end-to-end traces, wire protocol, and the recipe for adding an event type. Architecture Part 12 owns the *why*. |
 | [HitDetection.md](docs/HitDetection.md) | **The spatial layer, design and implementation map.** Hit volumes, position history, lag-compensated rewind, and the DETECT phase. Self-contained — no Architecture Part owns this one. |
+| [Hurtboxes.md](docs/Hurtboxes.md) | **The working manual for the thing that gets hit.** Starts from studs, `Vector3` and `CFrame`, then what a hurtbox is and the steps to author one by hand. HitDetection owns the *decision*; this owns the *procedure*. |
+| [AssetPipeline.md](docs/AssetPipeline.md) | **Where everything actually lives.** DataModel containers, replication, cloud assets, and the Rojo path from Studio and Blender into git. Read before Animation or the hurtbox chapter. |
+| [Animation.md](docs/Animation.md) | **Where animations live, how they are registered, and where gameplay may touch them.** The asset/id/track layers, who plays what, and why a marker never drives damage. |
+| [Timeline.md](docs/Timeline.md) | **Property tracks over time.** Why Roblox's one animation player only bends joints, the module that will play everything else, and the editor that authors it. Conceptual. |
 | [BossAI-HFSM.md](docs/BossAI-HFSM.md) | **Boss AI reasoning — conceptual, unbuilt.** Statechart model, combat reaction states, and what the first boss actually needs. A record of thinking, not a spec; read Part 7 before building. |
 | [Client-Architecture-Handoff.md](docs/Client-Architecture-Handoff.md) | Cold-start primer that preceded the client document. Largely superseded by it. |
 | [signalREADME.md](src/shared/utils/signal/signalREADME.md) | The Signal layer up close. |

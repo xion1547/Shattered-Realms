@@ -44,6 +44,16 @@ local TargetResolution = require(targeting:WaitForChild("TargetResolution"))
 local EntityService = require(authority:WaitForChild("EntityService"))
 local SpatialService = require(authority:WaitForChild("SpatialService"))
 
+-- TEMPORARY, like the print at the end of OnAttack. AttackDebug draws the
+-- resolved volume; SwingReport prints the numbers behind it. Two views of the
+-- same swing on purpose -- the drawing shows you WHERE, the report shows you
+-- WHY, and a disagreement between them is itself a finding.
+local diagnostics = serverRoot:WaitForChild("diagnostics")
+local AttackDebug = require(diagnostics:WaitForChild("AttackDebug"))
+local SwingReport = require(diagnostics:WaitForChild("SwingReport"))
+local SweepTrace = require(diagnostics:WaitForChild("SweepTrace"))
+local DebugConfig = require(diagnostics:WaitForChild("DebugConfig"))
+
 -- The verbose per-swing breakdown lived here and is gone: it did its job on
 -- 2026-08-15 and the numbers are recorded in Implementation-Status.md.
 -- `diagnostics/SwingReport.luau` is still on disk -- require it and call
@@ -66,17 +76,121 @@ local SkillService = require(script:WaitForChild("SkillService"))
 -- generous on purpose: the first thing to prove is that detection fires at
 -- all, and a tight volume makes a miss ambiguous between "the math is wrong"
 -- and "you were not pointing at it".
+-- A SWORD IS A CAPSULE THE SIZE OF A SWORD. It was an ARC -- a 12-stud,
+-- 120-degree CONE -- and that was wrong in a way worth recording rather than
+-- quietly deleting.
+--
+-- An ARC measures the full THREE-DIMENSIONAL angle to a target, so a
+-- 120-degree arc opens 60 degrees in every direction including up and down.
+-- Jump over an enemy and you still hit them, because they are inside the cone.
+-- Nothing about that resembles a sword, and it survived only because it was
+-- the first shape written, back when the question was "does detection fire at
+-- all" rather than "does it fire correctly".
+--
+-- The dimensions are a sword's, not a placeholder's:
+--
+--   length 6.5   arm plus blade, pivoting at the body
+--   radius 0.5   a blade is THIN. This is the number the cone had no
+--                equivalent of at all
+--   sweep 160    a horizontal slash, shoulder to shoulder
+--   window 0.4   fast, but slow enough to step out of
+--
+-- Those give 8 wedges automatically (160/20 and 0.40/0.05 both land on 8).
 local BASIC_SWING = HitVolume.resolve({
-    shape = HitVolume.Shape.ARC,
-    radius = 12,
-    angle = 120,
-    maxTargets = 6,
+    shape = HitVolume.Shape.CAPSULE,
+    length = 6.5,
+    radius = 0.5,
+    sweep = 160,
+    activeWindow = 0.4,
+
+    -- Held at hand height rather than through the middle of the chest. This is
+    -- a guess standing in for a real grip point: when a rigged weapon arrives,
+    -- the offset stops being typed here and gets read from the hand attachment
+    -- the blade is welded to (HitDetection.md §8.4).
+    offset = CFrame.new(0, -0.5, 0),
+
+    maxTargets = 5,
 })
+
+-- TEMPORARY, and here to be LOOKED AT rather than shipped.
+--
+-- These two exist so BOX and CAPSULE have a caller. They were stubbed out of
+-- Overlap on the reasoning that nothing declared them -- which was true and
+-- was still the wrong call: both are going to carry most of this game's
+-- attacks, and "no caller yet" is a thing a keybind fixes in a minute.
+--
+-- CLEAVE is a wide flat box pushed four studs forward, so it reads as a
+-- horizontal bar swept left to right rather than a fan. It is the volume that
+-- proves `offset` works at all -- the field was declared, validated and
+-- reach-accounted since HitVolume was written, and silently ignored by
+-- Overlap until 2026-08-16.
+local CLEAVE = HitVolume.resolve({
+    shape = HitVolume.Shape.BOX,
+    size = Vector3.new(18, 4, 5),
+    offset = CFrame.new(0, 0, -4),
+    maxTargets = 8,
+})
+
+-- THRUST is a long thin capsule straight ahead: the shape a spear or a beam
+-- wants, and the one case where the client's aim would matter enough to be
+-- worth CLIENT_AIM later (§10). Narrow on purpose -- if it catches the same
+-- dummies a 120-degree arc does, something is wrong with the maths rather
+-- than with the numbers.
+-- THRUST is a long thin capsule that SWINGS: the blade itself sweeping
+-- through 140 degrees over a third of a second, which is the closest this
+-- system gets to a real sword.
+--
+-- Note what `sweep` changes about reading these numbers. A 140-degree ARC is
+-- a fan that is entirely live at once; this is a 20-stud BLADE that is only
+-- ever in one place, and travels. A target standing at the far end of the arc
+-- has ~0.3s to leave before the blade arrives -- and if it does, it is
+-- genuinely missed rather than caught by a fan that was never there.
+local THRUST = HitVolume.resolve({
+    shape = HitVolume.Shape.CAPSULE,
+    length = 20,
+    radius = 1.5,
+    sweep = 140,
+    activeWindow = 0.35,
+    maxTargets = 4,
+})
+
+-- Which volume each subType resolves with. A table rather than an if-chain
+-- for the reason the Overlap dispatch is one: an unmapped subType should be
+-- findable, not silently fall through to the basic swing.
+local VOLUME_BY_SUBTYPE = {
+    [CombatEvent.SubType.MELEE] = BASIC_SWING,
+    [CombatEvent.SubType.AOE] = CLEAVE,
+    [CombatEvent.SubType.RANGED] = THRUST,
+}
 
 local CombatService = {}
 
 CombatService._signals = {}
 CombatService.Skills = SkillService
+
+-- SWINGS STILL IN FLIGHT. See HitDetection.md §8.2 -- the "stopwatch" half of
+-- the two drivers.
+--
+-- An instantaneous volume resolves inside OnAttack and is gone. A SWEEPING one
+-- cannot: its samples are spread across a window that mostly has not happened
+-- yet, and there is no history of the future. `poseAt` clamps a future
+-- timestamp to its newest entry, so resolving all eight samples up front would
+-- return the same instant eight times -- the machinery running and
+-- accomplishing nothing.
+--
+-- So the swing lives here until it finishes, and each sample is evaluated at
+-- the moment it actually arrives. THAT IS ALSO WHAT MAKES EVERY SAMPLE
+-- REWINDABLE: by the time sample five is due, sample five's moment is in the
+-- past, so `viewTimeFor` can reach back to what the attacker saw exactly as it
+-- does for an instantaneous swing. The stopwatch does not bypass lag
+-- compensation -- it is what allows it across a window.
+CombatService._sweeps = {}
+
+-- Monotonic, never reset. Two swings CAN be in flight at once -- two players,
+-- or one player and a boss -- and without an id per swing their sample lines
+-- interleave in the output with no way to tell which blade is which. Found by
+-- reading a log where two `sample 5/8` lines sat next to each other.
+CombatService._nextSweepId = 1
 
 function CombatService:boot()
     -- TODO: declare Combat.OnHit / OnKill / OnParrySuccess once those names
@@ -85,8 +199,43 @@ function CombatService:boot()
     -- Volumes are validated at boot rather than on first use, so a malformed
     -- one fails at startup instead of the first time a player presses attack.
     -- When volumes move to content this becomes a loop over all of them.
-    local ok, reason = HitVolume.validate(BASIC_SWING)
-    assert(ok, string.format("[CombatService] BASIC_SWING is malformed: %s", tostring(reason)))
+    -- TEMPORARY, and paired with SwingReport: the STARTING VALUES, printed
+    -- once, so a swing's numbers can be read against what was declared rather
+    -- than against memory. Half of "why did that miss" is answered by the
+    -- volume being a different size than anyone thought.
+    print("[CombatService] volumes declared:")
+    for subType, volume in pairs(VOLUME_BY_SUBTYPE) do
+        local ok, reason = HitVolume.validate(volume)
+        assert(ok, string.format(
+            "[CombatService] the %s volume is malformed: %s", subType, tostring(reason)))
+
+        local sweepNote = ""
+        if (volume.sweep or 0) > 0 then
+            local wedges = HitVolume.wedgeCount(volume)
+            local limits = HitVolume.wedgeLimits()
+            sweepNote = string.format(
+                "  sweep=%g deg over %.2fs -> %d wedges of %.1f deg / %.0fms "
+                    .. "(caps %g deg, %.0fms)",
+                volume.sweep, volume.activeWindow, wedges,
+                volume.sweep / wedges, volume.activeWindow / wedges * 1000,
+                limits.maxDegrees, limits.maxSeconds * 1000)
+        end
+
+        print(string.format("    %-8s %-8s reach=%.1f  maxTargets=%s  offset=%s%s",
+            subType,
+            volume.shape,
+            HitVolume.reach(volume),
+            tostring(volume.maxTargets),
+            volume.offset and tostring(volume.offset.Position) or "none",
+            sweepNote))
+    end
+
+    local spatial = SpatialService:constants()
+    print(string.format(
+        "[CombatService] rewind config: sample %dHz, history %.2fs (%d slots), "
+            .. "maxRewind %.2fs, interp %.2fs, ping x%d",
+        spatial.sampleHz, spatial.historySeconds, spatial.historyLength,
+        spatial.maxRewind, spatial.interpolationConstant, spatial.pingToRoundTrip))
 
     SkillService:boot()
     DamageResolution.buildPipeline()
@@ -143,9 +292,126 @@ function CombatService:OnAttack(player, event, _receivedAt)
     -- Held in a local rather than inlined, so the diagnostic below reports on
     -- the SAME query that produced the result. Rebuilding it would describe a
     -- different swing by a frame.
+    -- TEMPORARY: three shapes on three binds, so BOX and CAPSULE can be seen
+    -- working. When skills exist this is `skill.volume`, and the subType stops
+    -- choosing geometry.
+    local volume = VOLUME_BY_SUBTYPE[event:getSubType()]
+    if not volume then
+        return false, "NO_VOLUME_FOR_SUBTYPE"
+    end
+
+    -- A SWEEPING VOLUME TAKES THE OTHER PATH. It cannot resolve here: most of
+    -- its window has not happened, and there is no history of the future
+    -- (§8.2). It goes on the in-flight list and is stepped by tick.
+    if volume.sweep > 0 then
+        -- ONE BLADE PER ATTACKER AT A TIME. Without this, holding the key
+        -- stacks overlapping swings that each resolve independently -- and
+        -- since dedup is per swing, the same body takes a hit from every one
+        -- of them. That is a damage multiplier for pressing a button faster,
+        -- which is the shape of a real exploit rather than a debug annoyance.
+        --
+        -- THIS IS A PLACEHOLDER FOR A COOLDOWN, not a substitute for one.
+        -- SkillService:isReady already exists and nothing calls it; when
+        -- VALIDATE is written this check belongs there, expressed as the
+        -- skill's own recovery time rather than as "is the animation still
+        -- playing". Combo chaining, if it ever exists, is a cooldown that
+        -- ends before the swing does -- which this cannot express.
+        if self:_hasSweepInFlight(attacker) then
+            return false, "SWING_IN_PROGRESS"
+        end
+
+        -- ============================================================
+        -- THE WEDGE, and this is what closes the tunneling gap.
+        -- ============================================================
+        --
+        -- The obvious way to resolve a sweep is to test the blade AT each
+        -- sample angle. That leaves the space BETWEEN angles untested -- with
+        -- 140 degrees over 8 samples the blade jumps 20 degrees per step, and
+        -- anything narrow enough to sit in that gap is passed straight
+        -- through. The industry name for it is tunneling and every discretely
+        -- sampled system has it.
+        --
+        -- The fix falls out of the geometry: a blade that PIVOTS AT ITS OWN
+        -- ORIGIN and rotates from one angle to the next sweeps out a pie
+        -- slice. Radius is the blade's length; width is the step.
+        --
+        -- A pie slice is an ARC. So instead of 8 thin blade tests with gaps
+        -- between them, this resolves 7 wedges that TILE the whole sweep with
+        -- nothing left out -- using overlap maths that already exists and is
+        -- already tested.
+        --
+        -- It is also cheaper: 7 tests instead of 8.
+        -- DERIVED FROM THE SWEEP ITSELF, not authored. Bigger arcs and faster
+        -- swings get more wedges automatically; a slow wide boss sweep and a
+        -- fast narrow flick both land at a resolution that fits them, and
+        -- nobody has to pick a number per attack. HitVolume.wedgeCount carries
+        -- the reasoning.
+        local wedgeCount = HitVolume.wedgeCount(volume)
+        local stepDegrees = volume.sweep / wedgeCount
+
+        -- The blade's reach, and how wide the blade itself is in DEGREES.
+        -- The two shapes name these differently, which is the only reason
+        -- this needs a branch.
+        local reach, bladeDegrees
+        if volume.shape == HitVolume.Shape.CAPSULE then
+            reach = volume.length
+            -- A blade of thickness `radius` looks wider the closer you stand
+            -- to the pivot, so there is no single correct number. Measured at
+            -- half the blade's length: representative, and it errs generous,
+            -- which is the right direction for an attacker's own swing.
+            bladeDegrees = 2 * math.deg(
+                math.asin(math.clamp(volume.radius / (reach * 0.5), -1, 1)))
+        else
+            reach = volume.radius
+            bladeDegrees = volume.angle    -- an ARC already states its width
+        end
+
+        local instant = table.clone(volume)
+        instant.sweep = 0
+        instant.activeWindow = 0
+        instant.samples = 1
+        instant.shape = HitVolume.Shape.ARC
+        instant.radius = reach
+        instant.angle = math.min(360, stepDegrees + bladeDegrees)
+        instant.length = nil     -- meaningless now that this is an ARC
+
+        local sweep = {
+            id = self._nextSweepId,
+            player = player,
+            attacker = attacker,
+            volume = volume,
+            instant = table.freeze(instant),
+
+            -- N sample angles make N-1 gaps between them, and it is the GAPS
+            -- that get resolved. Stored rather than recomputed so the tick
+            -- loop and the trace cannot disagree about how many there are.
+            wedges = wedgeCount,
+            subType = event:getSubType(),
+            preferredId = CombatEvent.getTargetId(event),
+            startedAt = workspace:GetServerTimeNow(),
+            nextSample = 1,
+            seen = {},
+            order = {},
+        }
+        self._nextSweepId += 1
+        table.insert(self._sweeps, sweep)
+        SweepTrace.begin(sweep)
+
+        -- Nothing is due yet -- the first wedge fires half a step in, at the
+        -- middle of the span it covers. Called anyway so that a degenerate
+        -- volume (a zero-length window, say) finishes and cleans up here
+        -- rather than living on the list until the next tick.
+        if self:_advanceSweep(sweep, sweep.startedAt) then
+            table.remove(self._sweeps, #self._sweeps)
+            self:_finishSweep(sweep)
+        end
+
+        return true
+    end
+
     local query = TargetQuery.new({
         attacker = attacker,
-        volume = BASIC_SWING,
+        volume = volume,
         at = SpatialService:viewTimeFor(player),
 
         -- What the client clicked on, demoted to a HINT. It sorts the result
@@ -157,13 +423,235 @@ function CombatService:OnAttack(player, event, _receivedAt)
 
     local hits = TargetResolution.resolve(query)
 
+    -- TEMPORARY, and paired with HurtboxDebug: draws the fan the server
+    -- actually resolved, plus a red ball on everything it caught. Delete both
+    -- together once hit detection stops being the thing under construction.
+    AttackDebug.show(query, hits)
+
+    -- The SAME query object that produced `hits`, never a rebuilt one -- a
+    -- second TargetQuery would describe a different swing by a frame and the
+    -- report would quietly stop matching the result it claims to explain.
+    if DebugConfig.get("SwingReport") then
+        SwingReport.report(player, event, query, hits)
+    end
+
     -- TEMPORARY. resolveAttack is deliberately NOT called yet:
     -- DamageResolution's steps are still TODOs, and a half-run pipeline is a
     -- worse signal than no pipeline. When RESOLVE lands, a loop over `hits`
-    -- replaces this line.
-    print(string.format("[CombatService] %s swung -- %d hit(s)", player.Name, #hits))
+    -- replaces this print.
+    if DebugConfig.get("AttackLog") then
+        print(string.format("[CombatService] %s %s (%s) -- %d hit(s): %s",
+            player.Name, event:getSubType(), volume.shape, #hits, self.idsOf(hits)))
+    end
 
+    -- TRUE IS AN ANSWER TO THE CLIENT, not just a status code. EventRouter
+    -- turns it into a CONFIRM addressed to this event's id, which is what
+    -- resolves the client's pending action and lets it stop holding
+    -- optimistic state. Returning nothing leaves the client waiting until its
+    -- sweep times out -- which is exactly what it did until 2026-08-16.
     return true
+end
+
+-- A comma-separated list of what an attack caught, or "nothing".
+local function idsOf(entities): string
+    if #entities == 0 then
+        return "nothing"
+    end
+    local names = {}
+    for _, entity in ipairs(entities) do
+        table.insert(names, tostring(entity.identity:getId()))
+    end
+    return table.concat(names, ", ")
+end
+
+-- SWEEPS -----------------------------------------------------------------
+
+-- One evaluation of a sweeping volume, at the blade's position for `index`.
+--
+-- Resolves an INSTANT: `sweep.instant` is the same volume with its window and
+-- sample count stripped, so TargetResolution's own multi-sample loop does not
+-- run a second stepping on top of this one. Two loops stepping the same window
+-- would each be right and the pair would be wrong.
+function CombatService:_evaluateSweepSample(sweep, index: number)
+    local volume = sweep.volume
+    local wedges = sweep.wedges
+
+    -- WEDGE `index` COVERS THE SPAN, so it is aimed at the MIDDLE of that
+    -- span rather than at either edge. Wedge 1 of 7 across 140 degrees spans
+    -- -70 to -50 and points at -60; the volume's own width covers the rest.
+    --
+    -- Aiming at an edge instead would leave half of each wedge hanging
+    -- outside the swing at one end and overlapping nothing at the other --
+    -- correct total coverage, shifted 10 degrees off where the blade is.
+    local half = math.rad(volume.sweep) * 0.5
+    local step = (half * 2) / wedges
+    local angle = -half + (index - 0.5) * step
+
+    -- How far through the swing this wedge is, 0 to 1. Used only to tint the
+    -- debug overlay from cold to hot.
+    local fraction = wedges > 1 and ((index - 1) / (wedges - 1)) or 0.5
+
+    local query = TargetQuery.new({
+        attacker = sweep.attacker,
+        volume = sweep.instant,
+        at = SpatialService:viewTimeFor(sweep.player),
+        sweepAngle = angle,
+        preferredId = sweep.preferredId,
+    })
+
+    -- Recorded on the sweep so SweepTrace can rewind targets to the SAME
+    -- moment this sample resolved against. Reading `now` again there would
+    -- describe a different instant by a frame.
+    sweep.lastAt = query.at
+
+    local hits = TargetResolution.resolve(query)
+
+    -- SHORT LIFETIME SO THE BLADE ANIMATES. Samples are ~50ms apart; at the
+    -- default 0.35s every one of them is on screen at once for most of the
+    -- swing, which is geometrically correct and looks completely static.
+    -- Roughly two alive at a time reads as a moving blade.
+    --
+    -- Cold at the start of the arc, hot at the end, so the direction of travel
+    -- is readable from a still frame.
+    AttackDebug.show(query, hits, nil, {
+        lifetime = 0.10,
+        color = AttackDebug.SWEEP_START_COLOR:Lerp(AttackDebug.SWEEP_END_COLOR, fraction),
+    })
+
+    -- DEDUPLICATED ACROSS THE WHOLE SWING, not per sample. A body the blade
+    -- passes through for three consecutive samples is one target taking one
+    -- damage roll -- Part 8's rule, and the reason `seen` lives on the sweep
+    -- rather than on the query.
+    --
+    -- `newlyCounted` is what the trace needs to tell "in the volume again"
+    -- apart from "counted" -- the two are indistinguishable from a hit total,
+    -- and the difference IS the once-per-attack rule.
+    local newlyCounted = {}
+    local firstTouch = 0
+    for _, entity in ipairs(hits) do
+        if not sweep.seen[entity] then
+            sweep.seen[entity] = true
+            table.insert(sweep.order, entity)
+            newlyCounted[entity] = true
+            firstTouch += 1
+        end
+    end
+
+    -- TEMPORARY. Everything the sample measured, recorded for the table
+    -- printed when the swing ends. Candidates are recomputed with the same
+    -- inputs the cull used, so misses are recorded too -- a trace of only the
+    -- hits cannot answer "why did that one miss".
+    local origin = TargetResolution.originOf(query)
+    if origin then
+        local window = math.max(0, workspace:GetServerTimeNow() - query.at)
+        local margin = TargetResolution.constants().maxEntitySpeed * window
+        local candidates = SpatialService:candidatesNear(
+            origin.Position, HitVolume.reach(volume), margin)
+        SweepTrace.sample(sweep, index, angle, origin, candidates, hits, newlyCounted)
+    end
+
+    if DebugConfig.get("SweepWedges") then
+        print(string.format(
+            "    [sweep #%d] wedge %d/%d  centred %+.1f deg (%.1f wide)  %d in volume, %d new",
+            sweep.id, index, wedges, math.deg(angle), sweep.instant.angle,
+            #hits, firstTouch))
+    end
+end
+
+-- Whether this attacker already has a blade in the air.
+--
+-- A linear scan, and correct to keep as one: the list holds swings in flight,
+-- which is a handful at most even in a busy fight. A map keyed by attacker
+-- would be faster and would have to be kept in step with the list on every
+-- add and remove -- two representations of the same fact, which is the bug
+-- this codebase keeps choosing to avoid.
+function CombatService:_hasSweepInFlight(attacker): boolean
+    for _, sweep in ipairs(self._sweeps) do
+        if sweep.attacker == attacker then
+            return true
+        end
+    end
+    return false
+end
+
+-- Fires every sample whose moment has arrived. A loop rather than an `if`
+-- because a frame drop can leave two or three due at once, and skipping them
+-- would put a hole in the blade's path -- the one failure a swept volume
+-- exists to avoid.
+function CombatService:_advanceSweep(sweep, now: number): boolean
+    local volume = sweep.volume
+    local wedges = sweep.wedges
+    local step = volume.activeWindow / wedges
+
+    while sweep.nextSample <= wedges do
+        -- Due at the MIDDLE of the span this wedge covers, matching the angle
+        -- it is aimed at. The wedge is a shape and covers its whole span
+        -- regardless of when it is evaluated -- what the timing decides is
+        -- where the TARGETS are, and the middle of the span is the least
+        -- wrong single moment to ask about.
+        local due = sweep.startedAt + (sweep.nextSample - 0.5) * step
+        if now < due then
+            break
+        end
+
+        -- ADVANCED BEFORE THE EVALUATION, NOT AFTER, and that ordering is the
+        -- fix for a real failure: an error inside the evaluation used to leave
+        -- `nextSample` unchanged, so the tick retried the same wedge every
+        -- frame forever. The swing never finished, the attacker never cleared
+        -- `_hasSweepInFlight`, and every further attack was refused with
+        -- SWING_IN_PROGRESS -- from one nil argument.
+        --
+        -- Incrementing first guarantees forward progress no matter what the
+        -- evaluation does. A wedge that fails is a wedge that is skipped,
+        -- which is a bad swing; a wedge that fails forever is a dead player.
+        local wedge = sweep.nextSample
+        sweep.nextSample += 1
+        self:_evaluateSweepSample(sweep, wedge)
+    end
+
+    return sweep.nextSample > wedges
+end
+
+-- Scheduled. See the CombatService row in Scheduler.luau.
+function CombatService:tick(_dt: number)
+    if #self._sweeps == 0 then
+        return
+    end
+
+    local now = workspace:GetServerTimeNow()
+
+    -- Backwards, so removing an entry cannot shift one this loop has not
+    -- visited yet.
+    for index = #self._sweeps, 1, -1 do
+        local sweep = self._sweeps[index]
+        if self:_advanceSweep(sweep, now) then
+            table.remove(self._sweeps, index)
+            self:_finishSweep(sweep)
+        end
+    end
+end
+
+function CombatService:_finishSweep(sweep)
+    SweepTrace.finish(sweep)
+
+    -- TEMPORARY, and where the loop over `sweep.order` into resolveAttack goes
+    -- when RESOLVE lands. Announced at the END of the swing rather than per
+    -- wedge, because one swing is one attack no matter how many moments it
+    -- was tested at -- and because a body caught on wedge 2 and again on
+    -- wedge 6 must produce exactly one damage roll.
+    --
+    -- ON `AttackLog`, NOT `SweepWedges`. This is one line describing one
+    -- attack, the same as an instantaneous swing produces; the per-wedge
+    -- chatter is a separate, louder thing. Tying them together is what made a
+    -- sweeping attack print nothing at all while a click printed nothing
+    -- either -- symmetric, and useless.
+    if DebugConfig.get("AttackLog") then
+        print(string.format(
+            "[CombatService] %s %s (%s, sweep #%d, %g deg over %.2fs) -- %d hit(s): %s",
+            sweep.player.Name, sweep.subType, sweep.volume.shape, sweep.id,
+            sweep.volume.sweep, sweep.volume.activeWindow,
+            #sweep.order, idsOf(sweep.order)))
+    end
 end
 
 -- The one entry point every source of damage uses: a basic swing, a skill, a

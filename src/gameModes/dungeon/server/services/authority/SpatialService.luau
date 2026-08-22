@@ -146,7 +146,9 @@ end
 -- already holds the entity -- that is how it got here -- and keying by id
 -- would mean this service had to care whether ids are strings ("ENEMY_1")
 -- or numbers (UserId), which is a distinction it has no reason to know.
-function SpatialService:attach(entity, anchor: BasePart, radius: number)
+-- `halfHeight` is optional and defaults to a sphere, so every pre-capsule
+-- caller keeps working unchanged. See SpatialComponent:endpoints.
+function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHeight: number?)
     assert(type(entity) == "table" and entity.spatial,
         "[SpatialService] entity has no Spatial component")
 
@@ -174,7 +176,7 @@ function SpatialService:attach(entity, anchor: BasePart, radius: number)
         "[SpatialService] Spatial buffer holds %d samples; %d needed to span %.2fs at %dHz",
         available, HISTORY_LENGTH, HISTORY_SECONDS, SAMPLE_HZ))
 
-    entity.spatial:setAnchor(anchor, radius)
+    entity.spatial:setAnchor(anchor, radius, halfHeight)
 
     if not self._attached[entity] then
         self._attached[entity] = true
@@ -201,6 +203,22 @@ end
 
 function SpatialService:attachedCount(): number
     return self._attachedCount
+end
+
+-- Read-only iteration over the attached set.
+--
+-- A CALLBACK RATHER THAN A RETURNED TABLE, on purpose. Returning the set
+-- would either hand out the live table -- which a caller could mutate,
+-- breaking the count -- or allocate a copy on every call. This does neither,
+-- and it cannot outlive the loop.
+--
+-- Added for HurtboxDebug, which needs to draw every attached body. That is a
+-- legitimate read: `attachedCount` already exposes a weaker form of the same
+-- question, and nothing here lets a caller change who is attached.
+function SpatialService:forEachAttached(fn: (any) -> ())
+    for entity in pairs(self._attached) do
+        fn(entity)
+    end
 end
 
 -- SAMPLING --------------------------------------------------------------
@@ -370,7 +388,12 @@ function SpatialService:candidatesNear(position: Vector3, radius: number, margin
         local spatial = entity.spatial
         local cf = spatial and spatial:getCFrame()
         if cf then
-            local limit = reach + spatial.radius
+            -- THE BOUNDING RADIUS OF THE CAPSULE, not just its thickness. A
+            -- capsule reaches `halfHeight` further from its centre than a
+            -- sphere of the same radius does, and culling on the radius alone
+            -- would discard a tall target whose head or feet were inside the
+            -- volume. Broadphase must never be tighter than the narrow phase.
+            local limit = reach + spatial.radius + spatial.halfHeight
             local offset = cf.Position - position
             -- Squared throughout: comparing against limit^2 is the same
             -- test without the square root, and this runs once per attached

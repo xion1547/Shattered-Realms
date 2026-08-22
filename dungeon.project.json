@@ -1,15 +1,24 @@
 {
   "name": "Shattered-Realms",
+  "globIgnorePaths": ["**/.gitkeep"],
   "tree": {
     "$className": "DataModel",
 
     "ReplicatedStorage": {
-      "$path": "src/shared"
+      "$path": "src/shared",
+
+      "Effects": {
+        "$path": "assets/effects"
+      }
     },
 
     "ServerStorage": {
       "Shared": {
         "$path": "src/serverShared"
+      },
+
+      "Models": {
+        "$path": "assets/models"
       }
     },
 

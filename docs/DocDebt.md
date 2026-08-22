@@ -155,3 +155,76 @@ filter mechanism already exists for exactly this kind of scoping.
 
 The Damage Number System reads `event.hitsPerTarget` as of the rename above.
 Nothing else known stale — not swept in full.
+
+### Not written down anywhere yet — how an entityId becomes an Instance
+
+**The client is handed ids and needs objects, and no document says how the
+conversion happens.** §6.2's own Presenter example calls
+`VFX.playHit(event.targetId, …)` and `Telegraph.show(event.entityId, …)`.
+Both take an id. Both must end up touching a Model in `Workspace`. The step
+between them exists in no doc and in no code.
+
+`Timeline.md` now owes it too — Part 9.3 plays timelines on an entity's own
+body, which needs the same lookup. Effect prefabs escape it, because the
+client clones those itself and holds the reference directly (Part 8.1).
+
+**What it should say:** the server sets an `entityId` **attribute** on the
+model when it spawns it, and the client keeps one `entityId → Instance` map
+maintained by whatever handles entities appearing and leaving. An attribute
+rather than the instance name, because names are not unique and get changed
+for cosmetic reasons. One shared map rather than each playback module
+searching `Workspace`, because every one of them needs the same answer.
+
+**The trap that makes this urgent rather than tidy:**
+`diagnostics/DummySpawner.luau` already does `part.Name = tostring(id)`, and
+its own comment says that is for reading the Explorer, not for lookup. Any
+client code written today can find entities by name and appear to work — until
+a spawner names something differently, at which point playback silently
+targets nothing. This is a decision, not a discovery; make it before the first
+playback module ships.
+
+---
+
+## Resolved on 2026-08-16 — do not re-derive
+
+**`HitDetection.md` §7 was rewritten twice in one session** and now says
+hurtboxes are the model's own parts (oriented boxes), not spheres. Both earlier
+positions are preserved in §7.0 with the argument that collapsed. **The
+separating-axis cost argument against boxes was wrong** — the ring buffer
+stores CFrames, so rewinding a box is free. Do not resurrect it.
+
+**`docs/AssetPipeline.md` was created** and owns the DataModel / replication /
+cloud-asset / Rojo vocabulary. `Animation.md` and `HitDetection.md` §7 both
+depend on it. The five-round confusion about "does a model live on the server
+or in the workspace" is Part 1 of that document; it is settled and should not
+be re-argued.
+
+**`docs/Animation.md` was rewritten in full** in Architecture-Reference style —
+17 Parts, rejected designs, open questions. Supersedes the shorter version
+written earlier the same day.
+
+---
+
+## Animation — two files that disagree with the doc
+
+Two pieces of code predate `Animation.md` and conflict; neither is
+load-bearing, both are referenced only by tests.
+
+| File | Problem | Should be |
+|---|---|---|
+| `shared/eventTape/event/animation/AnimationRegistry.luau` | Content-Layer data filed under the transport layer, with two placeholder ids | `shared/definitions/AnimationManifest.luau`, with `priority` / `fadeTime` / `loadFor` per row |
+| `shared/eventTape/event/types/AnimationEvent.luau` | `withId` + `withSpeed` + `withLooped` is the "play animation X at rate Y" command shape that Client-Architecture's PLAYBACK section and `Animation.md`'s rejected-designs table both reject | Either deleted, or reshaped once a real case appears for one client rendering another entity's action — and the doc's answer for that is a COMBAT/SKILL fact carrying `skillId` + `serverTime`, not an animation id on the wire |
+
+Its own header already says animation is a client rendering concern and that
+`ANIMATION` is correctly absent from `EventRoutingRegistry`. The file agrees
+with the design in prose and disagrees with it in its schema.
+
+**Do not delete either until the manifest and client player exist** — the
+EventTape tests use `AnimationEvent` as their round-trip fixture, so removing
+it drops real coverage of an unrelated system. Replace the fixture first.
+
+### Not a doc problem, a decision that blocks work
+
+**The animation asset owner has not been chosen** (personal account vs group).
+It gates the first upload, and getting it wrong means re-uploading every
+animation in the game. `Animation.md` §2 has the detail.

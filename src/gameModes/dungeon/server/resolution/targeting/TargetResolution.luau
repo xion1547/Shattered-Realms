@@ -91,6 +91,18 @@ function TargetResolution._origin(query): CFrame?
     end
 
     local origin = CFrame.lookAt(pose.Position, pose.Position + direction)
+
+    -- THE SWING, APPLIED BEFORE THE OFFSET. Rotating the facing first means an
+    -- offset volume travels on an ARC around the attacker rather than sliding
+    -- sideways in front of them -- which is the difference between a sword
+    -- swing and a shove.
+    --
+    -- About the attacker's own up axis, not the world's, so a swing on a slope
+    -- stays in the plane the attacker is standing in.
+    if query.sweepAngle and query.sweepAngle ~= 0 then
+        origin = origin * CFrame.Angles(0, query.sweepAngle, 0)
+    end
+
     return volume.offset and (origin * volume.offset) or origin
 end
 
@@ -149,9 +161,24 @@ function TargetResolution._sweep(query, origin: CFrame, candidates)
                     -- Rewound, unlike the origin. nil means never sampled --
                     -- attached this frame, or already detached.
                     local pose = spatial and spatial:poseAt(at)
-                    if pose and Overlap.test(origin, volume, pose.Position, spatial.radius) then
-                        seen[entity] = true
-                        table.insert(found, entity)
+                    if pose then
+                        -- ENDPOINTS COME FROM THE REWOUND POSE, not the live
+                        -- one. The capsule leans with the body, so a target
+                        -- that has rotated since the attacker saw it must be
+                        -- reconstructed at the orientation they saw -- which
+                        -- is exactly why the ring buffer stores CFrames rather
+                        -- than positions.
+                        --
+                        -- A sphere hurtbox returns the same point twice, so
+                        -- one call covers both shapes with no branch. When
+                        -- HurtboxComponent lands (HitDetection.md §7.7) this
+                        -- becomes a loop over the entity's hitzones, each
+                        -- contributing its own pair.
+                        local capA, capB = spatial:endpoints(pose)
+                        if Overlap.test(origin, volume, capA, capB, spatial.radius) then
+                            seen[entity] = true
+                            table.insert(found, entity)
+                        end
                     end
                 end
             end

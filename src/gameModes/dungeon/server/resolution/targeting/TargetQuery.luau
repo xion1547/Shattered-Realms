@@ -59,6 +59,15 @@ function TargetQuery.new(config)
         -- rather than honoured, which is the whole point of there being one
         -- code path (Part 13).
         preferredId = config.preferredId,
+
+        -- WHERE THE BLADE IS IN ITS SWING, in radians, applied to the
+        -- attacker's facing before the volume's own offset. Zero, or absent,
+        -- is a volume pointing straight ahead.
+        --
+        -- The QUERY carries it rather than the volume, because the volume is
+        -- frozen content describing the whole swing while this is one moment
+        -- of it. A swing is many queries against one volume.
+        sweepAngle = config.sweepAngle,
     }, TargetQuery)
 end
 

@@ -288,9 +288,35 @@ function EventRouter:_route(player, event, receivedAt)
         return
     end
 
-    local ok, err = pcall(handler, player, event, receivedAt)
+    -- THE HANDLER'S RETURN VALUE IS THE ANSWER TO THE CLIENT, and until
+    -- 2026-08-16 it was discarded. The symptom was a client-side warning --
+    -- "[PendingActions] 'swing' timed out after 10.0s with no answer" -- on
+    -- every single attack, because the client registers a pending action and
+    -- nothing ever resolved it. Part 15's reconciliation contract is built on
+    -- pending actions being answered; an unanswered one is optimistic state
+    -- that only expires, never confirms.
+    --
+    -- The contract, matching what CombatService:OnAttack already returns:
+    --   true             -> CONFIRM
+    --   false, reason    -> REJECT with that reason
+    --
+    -- A handler that returns nothing gets NEITHER, deliberately. Most Services
+    -- have no client-visible answer to give, and firing a bare CONFIRM for
+    -- them would tell the client an action succeeded without saying what it
+    -- did. Silence is the correct answer to a Request nobody is waiting on.
+    local ok, result, reason = pcall(handler, player, event, receivedAt)
+
     if not ok then
-        warn(string.format("[EventRouter] '%s' handler errored: %s", eventType, tostring(err)))
+        -- `result` holds the error message on a failed pcall.
+        warn(string.format("[EventRouter] '%s' handler errored: %s", eventType, tostring(result)))
+        self:reject(player, event:getEventId(), RejectReason.MALFORMED)
+        return
+    end
+
+    if result == true then
+        self:confirm(player, event:getEventId(), nil)
+    elseif result == false then
+        self:reject(player, event:getEventId(), reason or RejectReason.UNROUTABLE)
     end
 end
 

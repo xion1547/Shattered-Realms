@@ -56,6 +56,20 @@ local DEFAULTS = {
     maxTargets = nil,
     requiresLineOfSight = false,
     offset = nil,
+
+    -- DEGREES THE VOLUME TRAVELS across its active window. Zero means it does
+    -- not move, which is every volume written before this field existed.
+    --
+    -- A blade is not everywhere in its arc at once. A one-second slice sweeps
+    -- through its arc, and a target at the far end has most of that second to
+    -- leave -- so treating the whole fan as live for the whole window hits
+    -- people who dodged, and no amount of `samples` fixes it because every
+    -- sample tests the same fan.
+    --
+    -- With `sweep > 0` on an ARC, `angle` stops meaning "the whole fan" and
+    -- starts meaning THE BLADE'S OWN WIDTH. On a CAPSULE it is the blade
+    -- itself rotating, which is the closest thing here to a real sword.
+    sweep = 0,
 }
 
 -- Which numeric fields each shape requires, and the rule each must satisfy.
@@ -149,7 +163,101 @@ function HitVolume.validate(volume): (boolean, string?)
         return false, "'offset' must be a CFrame"
     end
 
+    if volume.sweep ~= nil then
+        if type(volume.sweep) ~= "number" or volume.sweep < 0 or volume.sweep > 360 then
+            return false, "'sweep' must be between 0 and 360 degrees"
+        end
+        -- A volume that travels needs both a duration to travel over and more
+        -- than one moment to be tested at. One sample of a moving blade is a
+        -- stationary blade at an arbitrary point in its swing, which is worse
+        -- than not sweeping at all -- it looks like a bug rather than a
+        -- design.
+        if volume.sweep > 0 then
+            if (volume.activeWindow or 0) <= 0 then
+                return false, "'sweep' needs an 'activeWindow' to travel across"
+            end
+
+            -- `samples` IS NOT REQUIRED FOR A SWEEP and is not read for one.
+            -- The wedge count is derived from the sweep's angle and duration
+            -- (see HitVolume.wedgeCount), because it is a safety property
+            -- rather than a design knob. Rejected rather than ignored: a
+            -- number that silently does nothing is worse than one that fails
+            -- at boot with a reason.
+            if volume.samples ~= nil and volume.samples > 1 then
+                return false,
+                    "a sweeping volume derives its own resolution -- remove "
+                        .. "'samples', it is not read and would mislead"
+            end
+
+            -- A sweeping volume is resolved as a series of WEDGES covering the
+            -- space between sample angles, and a wedge is an arc sector. That
+            -- only makes sense for a shape that pivots at its origin: a blade
+            -- (CAPSULE) or a fan (ARC). A sweeping BOX has no meaningful swept
+            -- sector -- it would be a curved slab, which nothing here can
+            -- express and no attack has asked for.
+            if volume.shape ~= HitVolume.Shape.ARC
+                and volume.shape ~= HitVolume.Shape.CAPSULE then
+                return false, string.format(
+                    "'sweep' is only supported on ARC and CAPSULE, not %s",
+                    tostring(volume.shape))
+            end
+        end
+    end
+
     return true
+end
+
+-- WEDGE RESOLUTION -------------------------------------------------------
+--
+-- How many wedges a sweeping volume resolves as. DERIVED, not authored --
+-- see HitDetection.md §8.3 for what a wedge is.
+--
+-- WHY THIS IS NOT A NUMBER CONTENT WRITES. Since a sweep resolves as wedges
+-- that TILE the arc, coverage is complete at any count -- one wedge spanning
+-- the whole sweep leaves no gap in space. What the count actually buys is
+-- TIME resolution: with one wedge you test the entire arc at a single
+-- instant, so someone who walked in after the blade passed their spot is hit
+-- anyway. More wedges means a finer answer to *when*.
+--
+-- That makes it a safety property rather than a design knob, and safety
+-- properties should not be re-decided per skill. A designer who has to pick
+-- `samples` for every attack will eventually pick a bad one, and the failure
+-- is silent -- the attack still hits things, just at the wrong moments.
+
+-- A wedge wider than this stops being a blade and starts being a fan.
+local MAX_DEGREES_PER_WEDGE = 20
+
+-- A wedge longer than this gives a running target time to cross it, which
+-- breaks the link between "in the wedge at the sample" and "in the wedge when
+-- the blade passed". Roughly three frames.
+local MAX_SECONDS_PER_WEDGE = 0.05
+
+-- Sanity ceiling. Nothing sane reaches it; it exists so a typo in content
+-- (`activeWindow = 60`) costs a warning rather than twelve hundred resolves.
+local MAX_WEDGES = 64
+
+function HitVolume.wedgeCount(volume): number
+    if (volume.sweep or 0) <= 0 then
+        return 1
+    end
+
+    -- Whichever constraint is stricter wins. Angle alone is not enough: a
+    -- 360-degree spin over two seconds is SLOWER than a 90-degree flick over
+    -- a tenth of a second, and the flick is the one needing fine timing.
+    local byAngle = math.ceil(volume.sweep / MAX_DEGREES_PER_WEDGE)
+    local byTime = math.ceil((volume.activeWindow or 0) / MAX_SECONDS_PER_WEDGE)
+
+    return math.clamp(math.max(byAngle, byTime, 1), 1, MAX_WEDGES)
+end
+
+-- Exposed so diagnostics can report the caps alongside the count, rather than
+-- printing a number nobody can check.
+function HitVolume.wedgeLimits()
+    return {
+        maxDegrees = MAX_DEGREES_PER_WEDGE,
+        maxSeconds = MAX_SECONDS_PER_WEDGE,
+        maxWedges = MAX_WEDGES,
+    }
 end
 
 -- The furthest this volume extends from its origin, used to size the

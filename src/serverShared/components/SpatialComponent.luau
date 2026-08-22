@@ -41,6 +41,20 @@ function SpatialComponent.new(historyLength: number?)
         anchor = nil,
         radius = 0,
 
+        -- HALF THE LENGTH OF THE CAPSULE'S STRAIGHT SECTION, along the
+        -- anchor's LOCAL Y. Zero means the capsule degenerates to a sphere,
+        -- which is what every caller got before capsules existed and is still
+        -- the correct shape for anything round.
+        --
+        -- Total height is `2 * halfHeight + 2 * radius` -- the straight part
+        -- plus a hemisphere at each end.
+        --
+        -- ONE CAPSULE, NOT A LIST, and that is deliberate scope. HitDetection
+        -- §7.7 moves the list to a HurtboxComponent, because a list of shapes
+        -- is anatomy and this component's job is remembering where a body
+        -- was. One capsule is the shape a single anchor can honestly carry.
+        halfHeight = 0,
+
         _times = table.create(length, 0),
         _poses = table.create(length),
         _length = length,
@@ -59,15 +73,94 @@ end
 -- set here rather than in the constructor because an entity exists before
 -- its body does -- a player's PlayerEntity is built on join, and their
 -- character spawns some time afterwards.
-function SpatialComponent:setAnchor(anchor: BasePart, radius: number)
+function SpatialComponent:setAnchor(anchor: BasePart, radius: number, halfHeight: number?)
     assert(typeof(anchor) == "Instance" and anchor:IsA("BasePart"),
         "[SpatialComponent] anchor must be a BasePart")
     assert(type(radius) == "number" and radius > 0,
         "[SpatialComponent] hurtbox radius must be positive")
 
+    local half = halfHeight or 0
+    assert(type(half) == "number" and half >= 0,
+        "[SpatialComponent] halfHeight must be zero or positive")
+
     self.anchor = anchor
     self.radius = radius
+    self.halfHeight = half
     self:clearHistory()
+end
+
+-- The capsule's two segment endpoints in WORLD space, given a pose.
+--
+-- Returns the same point twice when `halfHeight` is zero -- a zero-length
+-- segment, which every Overlap function treats as a sphere. Callers never
+-- branch on shape.
+--
+-- ALONG LOCAL Y, so the capsule leans when the body leans. `cf * offset`
+-- transforms a local offset into world space, which is what carries the
+-- anchor's rotation into the result -- using `cf.Position + offset` instead
+-- would produce a capsule that stays stubbornly world-upright while the body
+-- turns, and that error is invisible until something is knocked over.
+function SpatialComponent:endpoints(cf: CFrame): (Vector3, Vector3)
+    local half = self.halfHeight
+    if half <= 0 then
+        local p = cf.Position
+        return p, p
+    end
+    local offset = Vector3.new(0, half, 0)
+    return cf * offset, cf * -offset
+end
+
+-- NO CALLERS AS OF 2026-08-20, including in tests. Written ahead of the
+-- hitzone list and never wired up. Flagged out loud because it was quoted in
+-- conversation as though it described how hurtboxes are built today, and it
+-- describes how ONE OF THREE routes would build them once something calls it.
+--
+-- IT IS THE DEFAULT, NOT THE POLICY. HitDetection §7.2.3: a hitzone may derive
+-- its capsule from a part (this function), declare the numbers in the Content
+-- Layer, or name a hurtbox part authored by hand inside the rig. All three
+-- reduce to an anchor plus a radius plus a halfHeight, so nothing downstream
+-- can tell which was used -- which is what makes the choice per-hitzone and
+-- reversible.
+--
+-- AND IT LIES ON SOME PARTS. `Size` is the AABB in the part's LOCAL axes, so a
+-- diagonal limb, a curved horn, a flat plate or a part with one outlying spike
+-- all derive badly. §7.2.1 has the table. Use the overlay to check, or use one
+-- of the other two routes.
+--
+-- Derive a capsule from a part's size, per HitDetection §7.2.1: the segment
+-- runs along the part's LONGEST axis, and the radius is half the smaller of
+-- the other two.
+--
+-- Returns `radius, halfHeight, axis`. A roughly cubic part yields
+-- `halfHeight == 0`, which is a sphere -- correct, and it falls out of the
+-- arithmetic rather than needing a special case.
+--
+-- ONLY THE Y CASE IS USABLE BY setAnchor TODAY, because `endpoints` builds
+-- its offset along local Y. A part whose longest axis is X or Z needs either
+-- a rotated anchor or a per-hitzone axis, and that arrives with
+-- HurtboxComponent. The axis is returned anyway so a caller can assert on it
+-- instead of silently getting a capsule pointing the wrong way.
+function SpatialComponent.capsuleFromSize(size: Vector3): (number, number, string)
+    local axis, longest = "Y", size.Y
+    if size.X > longest then
+        axis, longest = "X", size.X
+    end
+    if size.Z > longest then
+        axis, longest = "Z", size.Z
+    end
+
+    local a, b
+    if axis == "X" then
+        a, b = size.Y, size.Z
+    elseif axis == "Y" then
+        a, b = size.X, size.Z
+    else
+        a, b = size.X, size.Y
+    end
+
+    local radius = math.min(a, b) * 0.5
+    local halfHeight = math.max(0, longest * 0.5 - radius)
+    return radius, halfHeight, axis
 end
 
 function SpatialComponent:clearAnchor()

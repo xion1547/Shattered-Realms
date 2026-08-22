@@ -30,7 +30,20 @@ local SpatialService = require(serverRoot:WaitForChild("services"):WaitForChild(
 
 -- The radius of the sphere an attack volume is tested against for a player.
 -- Roughly a character's width. Tuned separately from the visible body.
-local PLAYER_HURTBOX_RADIUS = 2.5
+-- THE PLAYER'S CAPSULE IS DECLARED, NOT DERIVED, and that is the exception
+-- HitDetection.md §7.2.1 exists for.
+--
+-- Everything else derives its capsule from its anchor's own Size, because the
+-- anchor IS the body. A player's anchor is `HumanoidRootPart`, which is 2x2x1
+-- -- the rig's ORIGIN, not its body. Deriving from it would give a hurtbox
+-- one stud tall.
+--
+-- 1.5 and 1.5 gives a capsule 3 wide and 6 tall, centred on the root at ~3
+-- studs up: roughly an R15 character. Replaces a 2.5-radius sphere that was
+-- 5 studs across against a body 2 wide -- about 2.5x too fat horizontally,
+-- which was the number §7.1 kept citing as the reason this work was overdue.
+local PLAYER_HURTBOX_RADIUS = 1.5
+local PLAYER_HURTBOX_HALF_HEIGHT = 1.5
 local ServiceLoader = require(bootFolder:WaitForChild("ServiceLoader"))
 local PlaceManifest = require(bootFolder:WaitForChild("PlaceManifest"))
 local BootValidation = require(bootFolder:WaitForChild("BootValidation"))
@@ -163,7 +176,17 @@ function ServerManager:_bindCharacter(player, entity)
     local function attach(character)
         local root = character:WaitForChild("HumanoidRootPart", 10)
         if root then
-            SpatialService:attach(entity, root, PLAYER_HURTBOX_RADIUS)
+            SpatialService:attach(entity, root, PLAYER_HURTBOX_RADIUS, PLAYER_HURTBOX_HALF_HEIGHT)
+
+            -- Printed on every respawn, not just the first: attach clears the
+            -- history buffer, so this line is also the marker for "rewind has
+            -- nothing to reach back to yet" if a swing lands immediately after.
+            print(string.format(
+                "[ServerManager] %s attached to %s  capsule r=%.2f halfHeight=%.2f "
+                    .. "(total height %.1f)  rootSize=%s",
+                player.Name, root.Name, PLAYER_HURTBOX_RADIUS, PLAYER_HURTBOX_HALF_HEIGHT,
+                PLAYER_HURTBOX_HALF_HEIGHT * 2 + PLAYER_HURTBOX_RADIUS * 2,
+                tostring(root.Size)))
         else
             warn(string.format(
                 "[ServerManager] %s spawned without a HumanoidRootPart within 10s; "

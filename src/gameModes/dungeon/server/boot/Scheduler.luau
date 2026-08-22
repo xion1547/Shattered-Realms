@@ -28,6 +28,13 @@ local SCHEDULE = {
     { service = "SpatialService", hz = 30 },
     { service = "ResourceService", hz = 20 },   -- regen; 20Hz is plenty
     { service = "AIService", hz = 10 },         -- decisions do not need a frame
+
+    -- Steps swings that are still travelling (HitDetection.md §8.2). 60Hz
+    -- because the samples of a 0.35s swing are ~50ms apart, and ticking slower
+    -- than the sample spacing would fire two or three at once -- correct, but
+    -- it would make the blade jump rather than sweep, and the debug overlay
+    -- would show a stutter that the maths does not have.
+    { service = "CombatService", hz = 60 },
 }
 
 function Scheduler.start(services, router)
@@ -45,6 +52,7 @@ function Scheduler.start(services, router)
                 "[Scheduler] '%s' is scheduled but has no tick method", row.service), 0)
         end
         table.insert(entries, {
+            name = row.service,
             service = service,
             interval = 1 / row.hz,
             accumulator = 0,
@@ -65,7 +73,14 @@ function Scheduler.start(services, router)
                 entry.accumulator -= entry.interval
                 local ok, err = pcall(entry.service.tick, entry.service, entry.interval)
                 if not ok then
-                    warn(string.format("[Scheduler] tick failed: %s", tostring(err)))
+                    -- NAMES THE SERVICE, which it did not until 2026-08-16.
+                    -- "[Scheduler] tick failed: Argument 3 missing or nil"
+                    -- printed sixty times a second and did not say which of
+                    -- five scheduled services produced it -- so finding the
+                    -- one bad line meant reading all of them. An error that
+                    -- does not say where is barely an error.
+                    warn(string.format("[Scheduler] %s:tick failed: %s",
+                        entry.name, tostring(err)))
                 end
             end
         end
