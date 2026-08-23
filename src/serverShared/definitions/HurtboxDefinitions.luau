@@ -39,22 +39,72 @@
 -- > is briefly stale -- the smallest zone on the body, on the defensive side,
 -- > where "defense is generous" (Part 6) already errs your way.
 --
--- ONE CONSEQUENCE, NAMED. A client owns its own limbs, so it can influence
--- where its own zones sit. Accepted rather than defended against: what a liar
--- wins is a slightly displaced arm capsule on the DEFENSIVE side, and
--- "defense is generous" (HitDetection Part 6) already errs their way anyway.
+-- ONE CONSEQUENCE, NAMED. A client owns its own limbs, so the server's answer
+-- to "where is this player's forearm" is ultimately something that player's
+-- machine said. A modified client can move its own zones off its visible body,
+-- and attacks aimed where it appears to be pass through empty space. That is
+-- the classic hitbox-desync cheat.
 --
--- NOTHING ENFORCES A BOUND TODAY. An earlier version of this comment claimed
--- the displacement was "bounded rather than banned by a clamp on how far a
--- zone may sit from the root" (HitDetection 7.4) -- there is no such clamp,
--- in this file or anywhere else, and grepping for one was how that was found.
--- The bound is the right design if this ever matters; it is not built, and a
--- comment asserting a safety property the code does not have is worse than no
--- comment, because it stops anyone from checking.
+-- IT IS EVERY ZONE, NOT JUST AN ARM. All ten are limb-anchored -- Head rides
+-- "Head" and Torso rides "UpperTorso", the two largest zones on the body. An
+-- earlier version of this comment said "a slightly displaced arm capsule",
+-- which understated it by most of the body.
 --
--- What WOULD trigger building it: a body whose zones reach far enough from the
--- root that displacing one meaningfully changes what can hit it. An arm
--- capsule of radius 0.28 is not that.
+-- NOTHING ENFORCES A BOUND TODAY, and an earlier version of this comment
+-- claimed one did: "bounded rather than banned by a clamp on how far a zone
+-- may sit from the root" (HitDetection 7.4). There is no such clamp, here or
+-- anywhere -- grepping for one is how that was found. A comment asserting a
+-- safety property the code does not have is worse than no comment, because it
+-- stops the next person checking too.
+--
+-- ============================================================================
+-- THE BOUND IS INTENDED. IT IS NOT A MAYBE.
+-- ============================================================================
+--
+-- DECIDED 2026-08-23: a clamp gets built, on the stated principle that this
+-- project mitigates cheating rather than trying to eliminate it, and never at
+-- the cost of how the game feels.
+--
+--   Your arm cannot be forty studs away from you. It can be somewhere slightly
+--   wrong, and that is a trade we take knowingly.
+--
+-- THREE THINGS THAT FALL OUT OF THAT, and the third is the one to get right:
+--
+-- 1. CLAMP, DO NOT REJECT. A zone further from the root than plausible gets
+--    pulled back into the envelope, not discarded and not treated as an
+--    offence. Rejecting makes a laggy player's hurtbox vanish, which is a
+--    worse outcome than a mildly wrong one.
+--
+-- 2. MAKING THE CHEAT EXPENSIVE IS ITSELF THE MITIGATION. Warping a hurtbox
+--    past a bound means writing and maintaining a real exploit for a payoff
+--    that is purely DEFENSIVE in a PvE game -- more work than the work it
+--    avoids. Detection is a legitimate later layer on top; it is not needed
+--    for the bound to be worth having.
+--
+-- 3. ERR LOOSE. The two errors are NOT symmetric, and this is the inverse of
+--    the broadphase margin:
+--
+--      too loose  -> permits a bit more cheating. Costs a cheater's own
+--                    experience, in a PvE game, and nobody else's.
+--      too tight  -> clamps a LEGITIMATE limb. An honest player on a bad
+--                    connection, or in an unusual animation, silently gets a
+--                    hurtbox that does not match their body -- which is the
+--                    exact failure this whole layer exists to avoid, inflicted
+--                    on the people who did nothing wrong.
+--
+--    A wrong bound punishes the honest before it inconveniences the dishonest.
+--    Pick generously.
+--
+-- WHAT THE NUMBER SHOULD BE is deliberately not decided here. `boundingRadius`
+-- is already a measured, padded rest-pose reach from the root and is the
+-- obvious candidate -- but it exists for the BROADPHASE CULL, and quietly
+-- making one number serve two purposes is how a tuning change to one silently
+-- becomes a security change to the other. Decide it when it is built.
+--
+-- THE TRIGGER TO BUILD IT: any mode where one player's survivability affects
+-- another player's outcome -- PvP, scored clear times, a shared leaderboard.
+-- Today the game is PvE, so an unhittable cheater has only cheated themselves.
+-- That is why this is deferred, and it is the ONLY reason.
 --
 -- ============================================================================
 -- HOW PLAYERS AND BOSSES DIFFER, AND WHY

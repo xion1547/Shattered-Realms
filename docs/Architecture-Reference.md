@@ -3868,6 +3868,51 @@ NEVER — values or state:
   "I earned 200 gold"
 ```
 
+### Mitigate, Don't Chase — And Never At The Cost Of Feel
+
+> **Status:** SETTLED 2026-08-23. Stated once here because it calibrates
+> everything above, and because an absolutist reading of that table produces
+> bad decisions on its own.
+
+The table is absolute about **values**, and it should be. But some things the
+client controls are not values it reports — they are facts about its own body
+that it genuinely owns, because Roblox gave it network ownership. A player's
+limb positions are the live case (`HitDetection.md` 7.4: every one of a
+player's ten hurtbox zones rides a client-driven limb).
+
+For those, "never trust it" is not an available option. The available options
+are *ban the whole capability* or *bound it*, and the standing answer is:
+
+> **Bound it. Aim to make cheating expensive and unrewarding, not impossible —
+> and never buy a little more certainty with a lot less responsiveness.**
+
+**Three things this licenses, all of which look like weakened security until
+the alternative is priced:**
+
+| | |
+|---|---|
+| **Clamp rather than reject** | pull an implausible value into a plausible envelope instead of refusing it. Rejecting punishes a laggy honest player harder than it punishes a cheater, who simply stays inside the bound |
+| **Cost counts as a mitigation** | an exploit that takes real engineering to build and maintain, for a payoff that is purely cosmetic or purely defensive, mostly does not get built. That is a genuine deterrent, not a hopeful one |
+| **Detection is a later layer, not a prerequisite** | a bound that catches the casual case ships now; watching for someone who beat it is a separate, optional job that never blocks the first one |
+
+**The error asymmetry, which is the part that is easy to get backwards.** Every
+bound can be wrong in two directions and they are not equally bad:
+
+```
+too loose  ->  permits a bit more cheating
+too tight  ->  silently breaks the game for honest players on bad connections
+```
+
+**A wrong bound punishes the honest before it inconveniences the dishonest.**
+Pick generously. This is the same asymmetry already driving *"defense is
+generous, offense is exact"* and the deliberately over-wide broadphase margin,
+and it points the same way in all three.
+
+**What this does NOT license**, so it is not read as a general relaxation:
+nothing here weakens the NEVER list. A client still may not report a value, and
+the server still computes every outcome. This is about capabilities the client
+*already has* by construction — not about extending it new ones.
+
 ### Latency-Tolerant Hit Registration
 
 When the server receives a hit report, it checks where the enemy was some

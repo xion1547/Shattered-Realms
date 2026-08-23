@@ -226,7 +226,7 @@ survived an hour of argument and died the instant it was rendered.
 | Is `MAX_REWIND = 0.5` right? | Already 2× the shooter norm; no player data to tune against | Ping distribution from real sessions |
 | Does the broadphase need spatial partitioning? | ~100 entities is microseconds of linear scan | It appearing in a profile, or attached count passing ~500 |
 | Does single-target need a distance sort? | With `maxTargets = 1` and no client hint, the pick is arbitrary order | The first real single-target skill |
-| Is a bound on client-driven zone displacement needed? | A client owns its own limbs, so it can move its own zones. HitDetection 7.4 calls this "a bound, not a ban" — **no bound is implemented**, and a comment in `HurtboxDefinitions` claimed one was until 2026-08-23. What a liar wins is a displaced arm capsule on the defensive side, where "defense is generous" already errs their way | A body whose zones reach far enough from the root that displacing one meaningfully changes what can hit it |
+| ~~Is a bound on client-driven zone displacement needed?~~ | **DECIDED 2026-08-23 — yes, and it gets built.** Not an open question any more, only unscheduled. A client owns its own limbs, so it can displace **all ten** of its zones, Head and Torso included. `HurtboxDefinitions` claimed a clamp already existed until 2026-08-23; **none does.** Design in HitDetection 7.4: clamp not reject, err loose, cost-of-cheating counts as mitigation | Any mode where one player's survivability affects another's outcome — PvP, scored clear times, a shared leaderboard. Purely defensive in PvE, which is the only thing deferring it |
 
 ---
 

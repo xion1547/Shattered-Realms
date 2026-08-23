@@ -715,10 +715,65 @@ three capsules, not one clever shape. That is the whole reason the list exists.
 
 ### 7.4 — Client-owned rigs: a bound, not a ban
 
-A hurtbox may be anchored to any part whose position the **server** controls.
+**Status:** the principle is SETTLED; **the bound itself is UNBUILT, and was
+claimed as built in a code comment until 2026-08-23.**
+
 Anchoring to a part driven by a *client's* animation lets that client reshape
 its own hittable volume — position validation does not catch it, because the
-position is fine and the **shape** is the lie.
+position is fine and the **shape** is the lie. The server's answer to *"where
+is this player's forearm"* is ultimately something that player's machine said.
+
+**The title is the rule, and the built design relies on it.** An earlier
+revision of this Part opened *"a hurtbox may be anchored to any part whose
+position the server controls"* — which reads as a ban, and which the limb
+reversal (7.2a) contradicted the moment it shipped. **Every one of a player's
+ten zones is anchored to a client-driven part**, Head and Torso included. That
+is deliberate. A ban would mean the mannequin, and the mannequin was worse.
+
+#### What a liar actually wins, and why it is deferred
+
+The exploit is moving your own zones off your own visible body, so attacks
+aimed where you appear to be pass through empty space — the classic
+hitbox-desync cheat. Two things bound the damage:
+
+**It is purely defensive.** The zones a client can displace are its *own*. It
+buys being harder to hit; it cannot make anyone else easier to hit.
+
+**The game is PvE.** An unhittable cheater in a dungeon run has cheated
+themselves and cost nobody. **That is the only reason this is deferred**, and
+it is therefore also the trigger: *any mode where one player's survivability
+affects another player's outcome* — PvP, scored clear times, a shared
+leaderboard.
+
+#### The bound, when it is built
+
+**DECIDED 2026-08-23.** The stated principle is to mitigate cheating rather
+than chase eliminating it, and never at the cost of how the game feels.
+
+> Your arm cannot be forty studs away from you. It can be somewhere slightly
+> wrong, and that is a trade taken knowingly.
+
+| | |
+|---|---|
+| **Clamp, do not reject** | pull an implausible zone back into the envelope. Rejecting makes a laggy player's hurtbox vanish, which is worse than a mildly wrong one |
+| **Cost is a mitigation** | warping a hurtbox past a bound means writing and maintaining a real exploit for a purely defensive payoff — more work than the work it avoids. Detection is a legitimate later layer, not a prerequisite |
+| **Err loose** | see below. This is the one that is easy to get backwards |
+
+**The error asymmetry is the inverse of the broadphase margin's, and it matters
+more.** Too loose permits a little more cheating, which costs a cheater their
+own experience and nobody else's. **Too tight clamps a *legitimate* limb** — an
+honest player on a bad connection, or mid-animation, silently gets a hurtbox
+that does not match their body. That is the exact failure this entire layer
+exists to prevent, inflicted on the people who did nothing wrong.
+
+> **A wrong bound punishes the honest before it inconveniences the dishonest.
+> Pick generously.**
+
+**What the number should be is deliberately not decided.** `boundingRadius` is
+already a measured, padded rest-pose reach from the root and is the obvious
+candidate — but it exists for the **broadphase cull**, and quietly making one
+number serve two purposes is how a tuning change to one silently becomes a
+security change to the other.
 
 **The boundary is network ownership, not entity type.** "Players are different
 from bosses" is an entity-kind branch, which the architecture forbids, and it
@@ -1591,7 +1646,7 @@ Each named so it is not mistaken for an oversight.
 | Gap | Why acceptable now | Trigger to fix |
 |---|---|---|
 | ~~**One enveloping hurtbox per entity**~~ | **CLOSED 2026-08-22.** Ten limb-anchored zones per player, per-zone history, resolution testing them, the single capsule deleted | — |
-| **A zone displacement bound is claimed nowhere and enforced nowhere** | A client owns its own limbs, so it can move its own zones. What that wins is a slightly displaced arm capsule on the *defensive* side, where "defense is generous" already errs their way. 7.4 calls this "a bound, not a ban" — **no bound is implemented** | A body whose zones reach far enough from the root that displacing one meaningfully changes what can hit it. An arm capsule of radius 0.28 is not that |
+| **The client-driven zone bound is DECIDED and UNBUILT** | A client owns its own limbs, so it can move **all ten** of its own zones — Head and Torso included, not just an arm. What that wins is purely defensive, and the game is PvE, so an unhittable cheater has cheated only themselves. 7.4 carries the design: clamp not reject, err loose | **Any mode where one player's survivability affects another player's outcome** — PvP, scored clear times, a shared leaderboard. That is the only thing deferring it |
 | **`SWEEP` rotates about Y only** | Every attack so far is a horizontal fan | The first diagonal or overhead slash. Either a `sweepAxis` field, or `PATH` makes it moot |
 | **One window per activation** | No attack has needed two | The first X or multi-beat attack. `_sweeps` must hold several per activation |
 | **No start delay** | Every window opens on arrival | The first delayed attack. A beat is the field |
