@@ -1,5 +1,15 @@
 -- src/shared/definitions/AnimationManifest.luau
 --
+-- >>> PROVISIONAL 2026-08-23. The IDEA survives; this file's home may not. <<<
+--
+-- Name -> id is needed by anything that plays a clip, so the table itself is
+-- not in doubt. What is undecided is whether it stays a standalone manifest or
+-- folds into the Conductor's own content tree once Scores exist -- a Score that
+-- carries a clip track needs the same lookup, and two tables answering one
+-- question is the thing this codebase keeps deleting.
+--
+-- Decide when the Conductor is built, not before. Nothing depends on it yet.
+--
 -- NAME YOU CHOSE -> ID ROBLOX CHOSE. That is the entire job. See Animation.md.
 --
 -- Adding an animation is one row here and nothing else (Animation.md Part 14).

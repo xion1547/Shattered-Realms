@@ -1,5 +1,18 @@
 -- src/gameModes/dungeon/client/playback/Rig.luau
 --
+-- >>> FLAGGED FOR DELETION 2026-08-23. DO NOT BUILD ON THIS. <<<
+--
+-- Written ahead of the design conversation that decided the Conductor is the
+-- single door for ALL client-side animation. This file is a
+-- PLAYER-CHARACTER-ONLY special case sitting where a general primitive belongs:
+-- it is hardcoded to LocalPlayer, Humanoid and CharacterAdded, so it cannot
+-- animate a sword prop, a door, or a boss -- all of which are rigs.
+--
+-- The parts worth salvaging when the Conductor needs a clip primitive: the
+-- rebuild-on-respawn rule (one path for respawn and loadout change), the
+-- refusal to CREATE an Animator, and the Length-reads-0 check that is the only
+-- symptom a wrong-owner upload produces. The scope is what is wrong, not those.
+--
 -- ONE BODY'S ANIMATION TRACKS. Builds them, caches them, rebuilds them when the
 -- body changes, and plays them. See Animation.md Part 7.
 --

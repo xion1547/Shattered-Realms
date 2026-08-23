@@ -18,6 +18,12 @@
 -- server neither hears about it nor cares. If the swing is rejected the clip
 -- was a lie told to one screen for 300ms, which is the entire cost.
 --
+-- >>> THE `_rig` WIRING IS FLAGGED FOR REPLACEMENT 2026-08-23. <<< The clip
+-- call goes through the Conductor once it exists -- it is the single door for
+-- client-side animation, so a system reaching past it to an Animator is the
+-- thing that door exists to prevent. The CALL SITE is right; what it calls is
+-- temporary.
+--
 -- It is here rather than deferred because the round trip is real and the weapon
 -- has to feel immediate. An animation that waits for the server IS the input
 -- lag it would otherwise be hiding.
