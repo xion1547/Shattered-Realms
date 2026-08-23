@@ -7,10 +7,20 @@
 -- the server owns all of that and would ignore it anyway (Part 13). If a
 -- change to this file ever needs to know a hitbox size, the change is wrong.
 --
--- There is deliberately no prediction, no local swing animation and no
--- optimistic damage number. Those are the client rewrite's job, and adding
--- them before the server half is trustworthy makes every bug ambiguous
--- between "the server disagreed" and "the client lied to me".
+-- There is deliberately no prediction and no optimistic damage number. Those
+-- are the client rewrite's job, and adding them before the server half is
+-- trustworthy makes every bug ambiguous between "the server disagreed" and
+-- "the client lied to me".
+--
+-- THE SWING ANIMATION IS THE ONE EXCEPTION, added 2026-08-23, and it is not a
+-- softening of that rule. Playing a clip predicts NOTHING: it changes no state,
+-- claims no hit, and is not a number that could later be found wrong. The
+-- server neither hears about it nor cares. If the swing is rejected the clip
+-- was a lie told to one screen for 300ms, which is the entire cost.
+--
+-- It is here rather than deferred because the round trip is real and the weapon
+-- has to feel immediate. An animation that waits for the server IS the input
+-- lag it would otherwise be hiding.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -29,11 +39,18 @@ local VERBOSE = false
 local InputSystem = {}
 InputSystem.__index = InputSystem
 
-function InputSystem.new(eventTape)
+function InputSystem.new(eventTape, rig)
     assert(eventTape, "[InputSystem] needs the EventTapeClient to send through")
 
     return setmetatable({
         _eventTape = eventTape,
+
+        -- OPTIONAL. Nil means no clip plays and the attack still resolves
+        -- normally -- the swing is a server fact and the animation is a picture
+        -- of it. Keeping this optional is also what lets the send path be
+        -- tested with no rig at all.
+        _rig = rig,
+
         _mouse = Players.LocalPlayer:GetMouse(),
         _connection = nil,
     }, InputSystem)
@@ -50,7 +67,7 @@ function InputSystem:start()
         end
 
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            self:_attack(CombatEvent.SubType.MELEE, "swing")
+            self:_attack(CombatEvent.SubType.MELEE, "swing", "WARRIOR_SWING_1")
         elseif input.KeyCode == Enum.KeyCode.One then
             self:_attack(CombatEvent.SubType.AOE, "cleave")
         elseif input.KeyCode == Enum.KeyCode.Two then
@@ -79,7 +96,20 @@ end
 -- THIS FILE STILL KNOWS NOTHING ABOUT SHAPE. It sends "I pressed 1"; which
 -- volume that means lives on the server, where the reach and the size stay
 -- out of a client's reach (Part 13).
-function InputSystem:_attack(subType: string, label: string)
+function InputSystem:_attack(subType: string, label: string, clip: string?)
+    -- BEFORE THE SEND, DELIBERATELY. Not for speed -- these are microseconds
+    -- apart -- but because the ordering states the relationship: the clip is
+    -- not waiting on anything and never will be. Written after the send, the
+    -- next person to read it has to work out whether it is a response.
+    --
+    -- THE CLIP NEVER CROSSES THE WIRE. What goes out is "I pressed attack";
+    -- which animation that looked like is a private rendering decision this
+    -- machine made. That is what keeps a new animation from being a server
+    -- change (Animation.md Part 14).
+    if clip and self._rig then
+        self._rig:play(clip)
+    end
+
     local builder = EventFactory.create(CombatEvent)
         :withSubType(subType)
 
