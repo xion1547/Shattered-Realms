@@ -257,7 +257,7 @@ return function()
         -- to its oldest sample and return a real position from the wrong
         -- moment -- so it is checked rather than trusted.
         local part = makeAnchor()
-        a.throws(function() SpatialService:attach(entityWith(4), part, 2) end, "samples")
+        a.throws(function() SpatialService:attach(entityWith(4), part, TEST_ZONES) end, "samples")
         part:Destroy()
     end)
 
