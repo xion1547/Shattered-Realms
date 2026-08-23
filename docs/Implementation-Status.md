@@ -57,7 +57,7 @@ wired to anything. Everything below marked TESTED could be dead code.
 | DamageResolution | STUB | — | Pipeline builds; steps are TODOs |
 | SkillService | STUB | — | `activate` returns NOT_IMPLEMENTED |
 | AIService | STUB | — | Scheduler row exists, no decisions |
-| Animation | ABSENT | — | Architecture written (`Animation.md`, 2026-08-16); no code. Blocked on the asset-owner decision |
+| Animation | ABSENT | — | Architecture written (`Animation.md`). **No longer blocked** — the group exists and the experience was transferred to it on 2026-08-22. Next: author one clip, publish, register, play |
 | Timeline (non-rig property animation) | ABSENT | — | Engine **and** dev-only editor both designed (`Timeline.md`, rev. 2026-08-19); no code. Prototype planned as the first step of animation work — Part 13 |
 | Boss HFSM | ABSENT | — | Designed in `BossAI-HFSM.md` |
 

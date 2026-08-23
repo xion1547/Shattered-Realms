@@ -123,7 +123,7 @@ end
 -- EVERY ZONE IS REWOUND THROUGH ITS OWN LIMB, exactly as resolution does. A
 -- report that read the root instead would disagree with the thing it is
 -- reporting on, which is worse than not reporting.
-local function reportCandidate(entity, origin: CFrame, volume, at: number, now: number, wasHit: boolean)
+local function reportCandidate(entity, origin: CFrame, volume, at: number, now: number, wasHit: boolean, query)
     local spatial = entity.spatial
     local hurtbox = entity.hurtbox
     local id = tostring(entity.identity:getId())
@@ -192,7 +192,24 @@ local function reportCandidate(entity, origin: CFrame, volume, at: number, now: 
 
     if volume.shape == HitVolume.Shape.ARC then
         local reach = volume.radius + bestRadius
-        local limit = volume.angle * 0.5
+
+        -- THE SWING ROTATED, AND THIS REPORT DOES NOT.
+        --
+        -- A sweeping attack resolves as N wedges rotated across the whole arc,
+        -- at N different moments. This block reconstructs ONE volume at ONE
+        -- moment, un-rotated -- so the angle below is measured from the swing's
+        -- CENTRE, not from wherever the blade was when it passed this target.
+        --
+        -- Without widening the limit by half the sweep, the report calls a
+        -- target "inside the angle" that no individual wedge ever pointed at,
+        -- and then shows it as a miss with no failure reason. That happened on
+        -- 2026-08-22 and is why this exists: a diagnostic that disagrees with
+        -- the thing it explains is worse than no diagnostic.
+        --
+        -- Widened, the test becomes "could ANY wedge have caught this", which
+        -- is the honest question a single reconstruction can answer.
+        local span = query and query.sweepSpan or 0
+        local limit = volume.angle * 0.5 + span * 0.5
 
         if surface <= bestRadius then
             print(string.format(
@@ -217,8 +234,10 @@ local function reportCandidate(entity, origin: CFrame, volume, at: number, now: 
             end
 
             print(string.format(
-                "         %-10s angle %.1f -> %.1f after width (limit %.1f)%s",
-                "", angle, effective, limit, why))
+                "         %-10s angle %.1f -> %.1f after width (limit %.1f%s)%s",
+                "", angle, effective, limit,
+                span > 0 and string.format(", incl. %.0f deg of sweep", span) or "",
+                why))
         end
     elseif not wasHit then
         -- BOX and CAPSULE have no single angle to report, so the surface gap
@@ -292,7 +311,7 @@ function SwingReport.report(player: Player, event, query, hits)
 
     for _, entity in ipairs(candidates) do
         if entity ~= query.attacker then
-            reportCandidate(entity, origin, query.volume, query.at, now, isHit[entity] == true)
+            reportCandidate(entity, origin, query.volume, query.at, now, isHit[entity] == true, query)
         end
     end
 end

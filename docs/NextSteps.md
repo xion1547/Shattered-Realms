@@ -109,15 +109,15 @@ in is how a config move becomes a week.
 
 **Status:** UNBUILT. **This is the next phase.**
 
-### Blocked before anything else: the Roblox group must exist
+### ~~Blocked on the Roblox group~~ — DONE 2026-08-22
 
-An animation asset must be owned by the same account or group that owns the
-experience. Group role permissions are documented as **not working properly for
-animations**, and a personal-account asset does not transfer — it gets
-re-uploaded.
+**The group exists and the experience has been transferred to it.** That was
+the only irreversible step in the pipeline: an animation asset must be owned by
+the same account or group that owns the experience, group role permissions are
+documented as **not working properly for animations**, and a personal-account
+asset does not transfer — it gets re-uploaded.
 
-**It is the only irreversible step in the entire pipeline**, and the decision
-(GROUP) was made on 2026-08-16. Create it before the first upload.
+**Every upload from here goes under the group.** Nothing personal, ever.
 
 ### Then, in order
 

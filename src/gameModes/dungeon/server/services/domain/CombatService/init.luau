@@ -637,6 +637,7 @@ function CombatService:_finishSweep(sweep)
             volume = sweep.instant,
             at = sweep.lastAt,
             preferredId = sweep.preferredId,
+            sweepSpan = sweep.volume.sweep,
         }), sweep.order)
     end
 

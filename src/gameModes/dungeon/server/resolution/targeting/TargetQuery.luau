@@ -90,6 +90,11 @@ function TargetQuery.new(config)
         -- frozen content describing the whole swing while this is one moment
         -- of it. A swing is many queries against one volume.
         sweepAngle = config.sweepAngle,
+
+        -- DIAGNOSTICS ONLY, and never read by resolution. How many degrees the
+        -- whole swing covered, so a report reconstructing ONE moment of it can
+        -- say so rather than describing a swing that never happened.
+        sweepSpan = config.sweepSpan,
     }, TargetQuery)
 end
 
