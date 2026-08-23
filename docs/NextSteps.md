@@ -1,222 +1,264 @@
 # Next Steps
 
-### The work queue for hit detection and animation, with the reasoning behind each item
+### The work queue, with the reasoning behind each item's position
 
 > **Why this document exists.** `Implementation-Status.md` records what is
 > built. `HitDetection.md` records what was decided. Neither says **what to do
 > next, in what order, and why that order** — which is the thing that
 > evaporates between sessions and gets re-derived from scratch.
 >
-> Written 2026-08-22, after a day that reversed seven decisions. Every item
-> below carries the argument that put it where it is, so the ordering can be
-> attacked on its merits rather than trusted because it is written down
+> Every item carries the argument that put it where it is, so the ordering can
+> be attacked on its merits rather than trusted because it is written down
 > (`WorkingAgreement.md`).
+>
+> **Revised 2026-08-22.** The hurtbox rebuild is finished; the next phase is
+> animation.
 
 ---
 
 ## Where things stand
 
-**Hurtboxes are mid-rebuild and the new half is visible but inert.**
+**Hit detection is done except for one refactor.**
 
 | | |
 |---|---|
-| `HurtboxComponent` + `HurtboxDefinitions` | **BUILT.** Ten limb-anchored capsules for a player, one for a dummy |
-| `HurtboxDebug` | **BUILT.** Draws them welded per-limb; `DebugHurtboxLog` prints per-zone positions |
-| Checked by eye | **Yes.** Confirmed to sit correctly on the body and follow the pose |
-| Resolution | **still tests the OLD single capsule** |
+| Hurtboxes | **DONE.** Ten limb-anchored zones per player, per-zone history, resolution testing them. Single capsule deleted |
+| Suite | **206 passed, 0 failed** |
+| Verified live | swings resolve, AOE resolves, zones follow the pose |
+| Left in this layer | the attack-definition restructure, item 1 below |
 
-**Two shapes currently describe one body.** That is a deliberate, labelled
-transitional state — the zone numbers were eyeballed, so they got drawn and
-looked at before anything hit with them. It is not a state to leave standing.
+**Animation is the next layer, and everything downstream waits on it.** The
+hitbox side of hit detection (`motion = PATH`) cannot be authored without a
+Conductor, and a Conductor is animation work.
 
 ---
 
-## 1 — Per-zone history
+## 1 — Attack definitions out of `CombatService`
 
-**Status:** UNBUILT. **This blocks everything else.**
+**Status:** UNBUILT. Small, independent, and the last hit-detection item.
 
-### What
+### The finding that forces it
 
-Each zone needs its own ring buffer, rather than one buffer per body.
-
-### Why it blocks
-
-Resolution rewinds. Asking "where was this body 100ms ago" is currently one
-lookup against one buffer — and **one buffer cannot serve ten zones that are in
-ten different places at ten different moments.** A wing and a torso do not share
-a position, so they cannot share a history.
-
-Until this exists, resolution physically cannot test zones, which is why the
-overlay is drawing something the game does not use.
-
-### Cost, measured rather than guessed
-
-```
-10 zones x 47 slots x a CFrame   ~=  30KB per body
-20 bodies                        ~=  0.6MB
-sampling                              10 CFrame reads per body at 30Hz
+```lua
+[CombatEvent.SubType.MELEE] = BASIC_SWING,
 ```
 
-Affordable. The single-buffer design was chosen to avoid depending on whether a
-server script can observe animated limbs — `LimbProbe` answered that (it can),
-and the simplification outlived its reason.
+**That map is keyed by which button was pressed, not by who is swinging.** A
+goblin, a giant, a player with a dagger and a player with a greatsword all
+melee with the identical 6.5-stud capsule. The volume *cannot* vary by
+attacker — there is no path for it to.
 
-### Watch for
+### What is actually wrong
 
-The buffer is preallocated and never grows, deliberately: this is written by a
-30Hz tick for every entity forever, and a buffer that reallocated would be the
-one piece of the combat path producing garbage on a fixed schedule. Ten of them
-per body must keep that property.
+The engine is fine. `HitVolume` already **is** the declarative half — shape
+vocabulary, defaults, validation, wedge derivation. **The configuration is
+squatting in code.** Three volumes are typed as locals inside a domain Service,
+so adding an attack means editing `CombatService`, which fails the
+architecture's own test: *adding content should be a data edit.*
+
+### Skills and attacks are one concept
+
+Compare the bookkeeping, the way `PetRoster` was compared to `Equipment`:
+
+| | Basic attack | Skill |
+|---|---|---|
+| volume, `activeWindow`, animation | ✓ | ✓ |
+| cooldown | short | longer |
+| cost, unlock | none | some |
+
+Same shape, different fields populated. **A basic attack is a skill with no cost
+and no unlock.** Two parallel systems would mean two lookups, two validators,
+and two places to add a field forever. The vocabulary already exists —
+`skillId`, `SkillService:isUnlocked`, `isReady`.
+
+### The shape
+
+```
+serverShared/definitions/
+    enemies/          walked at boot -- drop a file in, it exists
+        Goblin.luau       stats, hp, loot, AND its skills, inline
+        Archer.luau
+    skills/           walked at boot
+        Warrior.luau      player skills by class
+    Hurtboxes.luau
+    Resources.luau
+```
+
+**The loader is the load-bearing part.** Rojo turns a folder into an Instance,
+so boot walks `GetChildren()` and requires each. Adding an enemy is then **one
+new file and zero code edits.** An index file listing the modules would be the
+same problem in more files — which is the thing this is meant to fix.
+
+**Skills live inline in an entity's file** until a second entity actually wants
+one, then move to `skills/Shared.luau` and get referenced by id. Not
+preemptively.
+
+**`EnemyTemplates` becomes `definitions/enemies/`.** Architecture Part 3 names
+the role — *"Definition: owns the idea, not the instance"* — and `Template` is a
+synonym that costs a mental translation on every read.
+
+### Scope caution
+
+**Do not let this become the skill system.** `SkillService`, cooldowns, damage
+numbers and unlocks all stay stubs. Those are a different job, and dragging them
+in is how a config move becomes a week.
 
 ---
 
-## 2 — `TargetResolution` loops zones
+## 2 — Animation: the first clip, end to end
 
-**Status:** UNBUILT. Depends on step 1.
+**Status:** UNBUILT. **This is the next phase.**
 
-### What
+### Blocked before anything else: the Roblox group must exist
 
-The narrow phase becomes per-zone: for each candidate, for each zone, test.
+An animation asset must be owned by the same account or group that owns the
+experience. Group role permissions are documented as **not working properly for
+animations**, and a personal-account asset does not transfer — it gets
+re-uploaded.
 
-### The trap, and it is the one that will cost hours
+**It is the only irreversible step in the entire pipeline**, and the decision
+(GROUP) was made on 2026-08-16. Create it before the first upload.
 
-> **The broadphase cull must switch to `boundingRadius()`.**
+### Then, in order
 
-With a zone list, an entity's real extent is **its furthest zone**, not its
-body. Cull against the torso's radius and you silently drop a body whose
-outstretched arm genuinely *was* inside the volume.
+1. **Insert an R15 rig, author one swing, set priority to `Action` at author
+   time.** A swing authored at `Core` is silently overpowered by the default
+   walk cycle and looks exactly like a failed asset load — the standard first
+   bug.
+2. **Publish it. Record the id.**
+3. **`Clips.luau`** — name → assetId, priority, fadeTime.
+4. **`Rig.luau`** — builds and caches `AnimationTrack`s, rebinds on respawn.
+   Death produces a new rig with a new `Animator`; every cached track from the
+   old body is dead, and the same code path must handle both respawn and
+   loadout change or one of them will rot.
+5. **One line in `InputSystem`** to play it.
 
-**That failure looks identical to broken overlap math and is far harder to
-find, because the exact test never runs to be debugged.** `HurtboxComponent`
-already computes `boundingRadius()` for exactly this and nothing calls it yet.
+**That loop validates ownership, upload, the manifest, track caching and
+rebinding** — none of which anything else in the repo exercises.
 
-### What does not change
+### What is settled about animation
 
-Dedup. The `seen` set already guarantees once-per-activation, so a body caught
-on two zones is still one hit and one damage roll.
-
----
-
-## 3 — Delete the single capsule
-
-**Status:** blocked on 2.
-
-`SpatialService:attach` loses its `radius` and `halfHeight` parameters.
-`SpatialComponent` loses its capsule fields. `HurtboxDebug` loses its fallback
-path, and its boot message loses the note saying the zones are not what hits.
-
-**Do not skip this and leave both.** Two shapes describing one body is exactly
-the drift this codebase keeps closing elsewhere.
-
----
-
-## 4 — Tests
-
-Three cases carry the whole change:
-
-| Test | Proves |
+| | |
 |---|---|
-| A shot passing **between** two zones misses | the gaps are real — this is the bug the rebuild exists to fix |
-| A shot into one zone hits | the zones are wired to resolution at all |
-| A body overlapping **two** zones produces exactly **one** hit | dedup survived the loop |
+| Ownership | **GROUP.** Must hold from the first upload |
+| Rig | **R15** |
+| Who plays a player's clip | **the client**, optimistically, before sending. The server round trip is the whole feel of the weapon |
+| Who plays an NPC's clip | **the server.** Client-started never replicates |
+| The animation never crosses the wire | client sends the skill; the server validates the skill and returns the damage. The clip is a private rendering decision |
+| Markers never drive damage | client-side, on the wrong clock |
 
-The first one is the important one. One enveloping capsule made the space
-between a large enemy's limbs hittable; if that test does not pass, nothing was
-actually gained.
+**Moon Animator is a tool preference with no architectural consequence for the
+rig half** — its joint export is a normal `KeyframeSequence` that publishes like
+any other. Its *property* half is what `Timeline.md` replaces.
 
 ---
 
-## 5 — The hitbox side: `motion = PATH`
+## 3 — The Conductor
 
-**Status:** UNBUILT, designed in `HitDetection.md` Part 9.
+**Status:** DESIGNED (`Timeline.md`), UNBUILT. Gated on item 2.
 
-### What
+Plays a **Score**: property tracks, action tracks, and clip tracks on one
+transport. `Conductor` is the engine, `Score` is the document.
 
-A hitbox is its own object with its own authored motion — a volume travelling a
-path placed by hand, anchored to the attacker's root, evaluated by the server
-from local data.
+**The requirement is *tandem*, not interpolation.** Interpolating a number is
+`a + (b - a) * t`. Staying locked to the swing is the part that actually fails,
+and it fails by giving the effect its own stopwatch.
 
-### The ordering argument
+**The clock is a parameter**, and that is the one real abstraction:
 
-`PATH` needs the Conductor to author paths, and the Conductor needs animation
-work started. Hurtboxes need none of that. **So hurtboxes finish first**, and
-they are also where the known bug is.
+| Clock source | For |
+|---|---|
+| follow an `AnimationTrack` | anything in tandem with a rig |
+| free-running | standalone effects |
+| anchored to a server timestamp | anything two players must see identically |
 
-### Two details that are easy to get wrong
+**A Score is a span of time with things scheduled in it. Silence is legal.** An
+anime-style delayed slash is a 0.4s clip, an 800ms gap where nothing plays, and
+a VFX burst at 1.2s. The transport keeps running because it is the Conductor's,
+not a clip's.
+
+---
+
+## 4 — `motion = PATH`, the hitbox side
+
+**Status:** DESIGNED (`HitDetection.md` Part 9), UNBUILT. Gated on item 3.
+
+The hitbox becomes its own object with its own authored motion — a volume
+travelling a path placed by hand in the Conductor, anchored to the attacker's
+root, evaluated by the server from local data.
+
+**Two details that are easy to get wrong:**
 
 **Store the pivot, not the blade tip.** Interpolating two *positions* gives a
 straight line; a blade travels an arc. Storing the pivot's frame and letting
 `CFrame:Lerp` interpolate the rotation spherically makes the arc exact at any
-key density. Storing tip positions works on a dense recording and fails badly
-on a hand-authored sparse one — the case nobody would think to check.
+key density. Tip positions work on a dense recording and fail badly on a sparse
+hand-authored one — the case nobody would think to check.
 
 **Run the driver at 60Hz, not the sampler's 30Hz.** A blade tip covers ~45
 studs/second. Tunneling is impossible while the hitbox moves less than the
-smallest hurtbox radius per tick, and at 30Hz that is 1.5 studs against a
-1.5-radius body — exactly at the limit. **And the hitzone list makes this
-worse**: a 0.3-radius limb capsule is narrower than the gap 60Hz leaves.
+smallest hurtbox radius per tick; at 30Hz that is 1.5 studs against a 1.5-radius
+body, exactly at the limit. **And the hitzone list makes it worse** — a
+0.3-radius limb capsule is narrower than the gap 60Hz leaves.
 
 ---
 
-## 6 — Then: Conductor, first animation, enemies
+## 5 — Then: give attacks back to the enemies
 
-In order, and each one gated on the last:
+They currently do not attack at all. `EnemyAttackDemo` is in `_toDelete/`,
+removed deliberately so the old `SWEEP` model would not be built twice.
 
-1. **The Conductor** — plays a `Score`. Property tracks, action tracks, and clip
-   tracks on one transport. `Timeline.md` has the design.
-2. **The first real attack** — animate it, author its hitbox path against it,
-   play it, swing it at a dummy.
-3. **Give it to enemies.** They currently do not attack at all; that path was
-   removed deliberately so the old `SWEEP` model would not be built twice.
-
-**Blocked before any of this: the Roblox group must exist.** An animation asset
-must be owned by the same account or group that owns the experience, group role
-permissions are documented as not working properly for animations, and a
-personal-account asset does not transfer — it gets re-uploaded. It is the only
-irreversible step in the whole pipeline.
+Enemy attacks resolve at `at = now` with **no rewind** — the telegraph windup
+*is* the compensation, and rewinding on top of it would retroactively hit a
+player who visibly dodged.
 
 ---
 
-## Two gaps that will bite a fast boss
+## Gaps that will bite a fast boss
 
-Neither is urgent. Both are cheap. Both produce symptoms that are impossible to
-diagnose from inside the game.
+Neither is urgent. Both are cheap. Both produce symptoms that cannot be
+diagnosed from inside the game.
 
-**`MAX_ENTITY_SPEED = 120`** in `TargetResolution` is the broadphase margin —
-how far anything could have travelled during the rewind window. **A boss that
-flies faster than that gets silently culled from its own hit test.** No error,
-no warning; swings just return nothing, and it looks like broken overlap math.
+**`MAX_ENTITY_SPEED = 120`** in `TargetResolution` is the broadphase margin. **A
+boss that flies faster gets silently culled from its own hit test** — no error,
+swings just return nothing, and it looks like broken overlap math.
+
+For scale: default walkspeed is 16 studs/sec, so 120 is **7.5× walking**. Most
+bosses will not come near it; a diving flyer might.
 
 **Ping is sampled fresh per swing and never smoothed**, and
 `INTERPOLATION_CONSTANT = 0.1s` is borrowed rather than measured. Both convert
 into positional error linearly with target speed:
 
 ```
-positional error = target speed x timing error
+error = target speed x timing error
 
   20 studs/sec, 30ms off  ->  0.6 studs   fine
   60 studs/sec, 30ms off  ->  1.8 studs   eating the margin
  120 studs/sec, 30ms off  ->  3.6 studs   misses a 3-stud body
 ```
 
-A slow boss is robust to this. A fast one is only as accurate as the ping
-estimate.
+**If something genuinely outruns the rewind, deferring to the client's report
+for that case is reasonable** — better than confidently-wrong server geometry.
+Noted as an option, not built.
 
 ---
 
 ## Settled — do not re-argue these
 
-Each of these consumed real time and reached a conclusion with a reason. Attack
-them with a better argument if there is one, but not from scratch.
+Each consumed real time and reached a conclusion with a reason. Attack them with
+a better argument if there is one, but not from scratch.
 
 | Settled | Because |
 |---|---|
-| **Server-authoritative.** Client-detects-server-validates stays rejected | stated preference, repeatedly: the client-tells-server pattern is disliked outright |
-| **Ownership decides the hitbox model.** Server-animated rig → `LIVE`; client-animated → `PATH` | bone-attached colliders require synchronised skeletal animation on both machines. `LimbProbe` measured that we do not have it for client rigs (~0.104s) and do for server rigs |
-| **Hitboxes are never real parts at test time** | a part only exists *now*, and this layer's job is answering about the past. Recording a part's motion at dev time is fine; testing against one is not |
-| **Rewind stays** | dropping it would allow Roblox's built-in queries and delete a lot of code, at the cost of a player on 120ms ping missing shots that visibly connected |
+| **Server-authoritative.** Client-detects-server-validates stays rejected | stated preference, repeatedly. The client-tells-server pattern is disliked outright |
+| **Ownership decides the hitbox model.** Server-animated rig → `LIVE`; client-animated → `PATH` | bone-attached colliders require synchronised skeletal animation on both machines. `LimbProbe` measured we do not have it for client rigs (~0.104s) and do for server rigs |
+| **Hitboxes are never real parts at test time** | a part only exists *now*, and this layer answers about the past. Recording a part's motion at dev time is fine; testing against one is not |
+| **Rewind stays** | dropping it allows Roblox's built-in queries and deletes a lot of code, at the cost of a 120ms player missing shots that visibly connected |
 | **Capsules, not exact mesh geometry** | curves do not survive export, and it would make every art change a balance change |
-| **Zones ride their own limb, including for players** | the error is `limb speed x 0.104s`, which at walking speed is 0.30 studs against an arm capsule of radius 0.28 — under its own thickness. Root-anchoring bought exactness on zones that were never inaccurate and paid with a body matching nothing visible |
+| **Zones ride their own limb, including for players** | the error is `limb speed × 0.104s` — 0.30 studs at walking speed against an arm capsule of radius 0.28, under its own thickness |
+| **Per-limb history lives in `SpatialComponent`, not a child** | the `PetRoster` → `Equipment` precedent: same bookkeeping, so it keys in rather than duplicating every invariant |
+| **Skills and attacks are one concept** | same shape, different fields populated |
 
 ---
 
@@ -225,8 +267,9 @@ them with a better argument if there is one, but not from scratch.
 | Document | |
 |---|---|
 | `WorkingAgreement.md` | how decisions get justified here. **Read before proposing changes** |
-| `HitDetection.md` | the design and the rejected alternatives. Part 0 is the orientation |
+| `HitDetection.md` | Part 0 is the orientation. Part 9 is the motion model |
 | `Hurtboxes.md` | the authoring manual — studs, `CFrame`, placing a capsule by hand |
-| `Implementation-Status.md` | what is built and what is actually proven |
-| `Timeline.md` | the Conductor and the Score |
 | `Animation.md` | clips, upload, ownership, the manifest |
+| `Timeline.md` | the Conductor and the Score |
+| `Implementation-Status.md` | what is built and what is actually proven |
+| `DocDebt.md` | stale spots, code traps, resolved-do-not-re-derive |

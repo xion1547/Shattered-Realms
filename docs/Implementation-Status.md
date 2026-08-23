@@ -5,6 +5,10 @@ needs reading start to finish.**
 
 Last updated: **2026-08-22**. Suite: **206 passed, 0 failed.**
 
+> **The hurtbox rebuild is DONE.** Ten limb-anchored zones per player, per-zone
+> history, resolution testing them, the single capsule deleted. Verified live.
+> What is left in this layer is the attack-definition restructure — `NextSteps.md`.
+
 > **What to build next lives in `NextSteps.md`**, with the reasoning behind the
 > ordering. This file is only what exists and what is proven.
 
@@ -35,15 +39,15 @@ wired to anything. Everything below marked TESTED could be dead code.
 | Components | TESTED | 24 | Every component's invariants |
 | Spatial (component + service) | **VERIFIED** | 25 | Ring buffer wrap, interpolation, rewind arithmetic — plus live: buffer spanning 1.55s, rewound positions matching live on static targets |
 | Overlap — **volume shapes** | **VERIFIED** | 11 | Pure math, plus live arc behaviour hand-checked (below) |
-| Overlap — **target shape** | **MID-REBUILD** | — | Tests assume one capsule per body. `HurtboxComponent` now holds ten limb-anchored zones and is **drawn but not tested against** — resolution still uses the single capsule. `NextSteps.md` items 1–4 |
-| `HurtboxComponent` + `HurtboxDefinitions` | **BUILT, CHECKED BY EYE** | — | Ten capsules for a player, each welded to its own limb and following the pose; one for a dummy. Verified by looking at the overlay, which is the only way this is checkable (HitDetection 0.5). **Nothing tests against it yet** |
-| Per-zone position history | **ABSENT — blocks the above** | — | One buffer per body cannot serve ten zones in ten places. ~30KB per body. `NextSteps.md` item 1 |
+| Overlap — **target shape** | **BUILT** | — | Resolution tests the zone list. The single capsule is deleted; a body with no hurtbox is not hittable, asserted at attach |
+| `HurtboxComponent` + `HurtboxDefinitions` | **VERIFIED** | — | Ten limb-anchored zones per player, one per dummy. Drawn, looked at, and confirmed to follow the pose. Resolution tests them |
+| Per-zone position history | **BUILT** | 25 | `SpatialComponent` keys rings by `BasePart`. One shared timeline and cursor, one pose array per part |
 | Sweep (`sweep` field, travelling blade) | **VERIFIED** | — | 140° over 0.35s in 8 samples. Live-checked: the same swing caught targets on samples 6–8 with 1–5 empty, and on another swing 1–4 with 5–8 empty — **a static fan cannot produce that.** Dedup across the swing confirmed ("2 in volume, 1 new") |
 | Stopwatch driver (`CombatService:tick`) | **VERIFIED** | — | Samples fire ~50ms apart at 60Hz; every sample is evaluated at its own moment and rewound normally, so the whole window stays in history — §8.2 |
 | Enemy-attack sweeps | **REMOVED 2026-08-21** | — | `EnemyAttackDemo` is in `_toDelete/`. Enemies still spawn and are hittable; they no longer swing. Giving them attacks on the old `SWEEP` model would mean building it twice — they come back after `motion = PATH` |
 | Attack cooldowns | **ABSENT — placeholder in place** | — | `_hasSweepInFlight` rejects a second swing from the same attacker. Stops key-spam stacking overlapping blades, each with its own dedup set. `SkillService:isReady` exists and nothing calls it; this belongs in VALIDATE as a real recovery time |
 | HitVolume | TESTED | 7 | Defaults, validation, reach per shape |
-| TargetResolution | **VERIFIED for what it tests** | 9 | Five stages, dedup, caps, and a live swing checked by hand — **all against sphere hurtboxes**. The staging is proven; the target geometry it is fed is not |
+| TargetResolution | **VERIFIED** | 9 | Five stages, dedup, caps, live swings hand-checked. Now tests the zone list, each zone rewound through its own limb |
 | Event / Registry / Schema | TESTED | 36 | Schema parse, required/forbidden fields, unknown-key rejection |
 | EventTape / Builder | TESTED | 20 | Fluent build, serialize round trip, tape batching |
 | EventRouter | **VERIFIED** | 22 | Routing, rate limit, oversized-tape drop, unroutable rejection — plus a real client event routed live |
@@ -159,12 +163,54 @@ act on in six months.
 - **No enemy has ever attacked.** The enemy-side path (`at = now`, telegraph as
   the compensation) has tests but no live run.
 - **Nothing persists.** DataService is a stub.
-- **Hurtboxes are mid-rebuild, and the OLD shape is still what hits.** One
-  capsule per entity, the player's ~2.5× too wide horizontally. The live swing
-  table above is geometrically correct *for the capsule it was given* — it does
-  not show that the capsule is the right shape. The replacement is built and
-  drawn but not yet tested against — `NextSteps.md` items 1–4. This stays in
-  this list until resolution loops zones.
+- ~~**Hurtboxes are a known-wrong placeholder.**~~ **CLOSED 2026-08-22.** Ten
+  limb-anchored zones per player, per-zone history, resolution testing them,
+  the single capsule deleted.
+
+---
+
+## The hurtbox rebuild, 2026-08-22
+
+Four commits, and two bugs only a live run could have found.
+
+| | |
+|---|---|
+| Per-zone history | `SpatialComponent` keys rings by `BasePart`. **One shared timeline and cursor, N pose arrays** — every part is sampled on the same tick, so per-part counters would be numbers that must never diverge |
+| Zones ride their own limb | `anchor` is a part NAME resolved per body in `bind`, re-resolved on every respawn. A missing part falls back to the root and warns |
+| Resolution loops zones | returns on the first zone that connects; dedup would discard the rest anyway |
+| The single capsule | deleted, with `capsuleFromSize` (zero callers since written, and in the wrong file regardless) |
+
+### Two bugs the live run caught and nothing else would have
+
+**`boundingRadius` measured the wrong distance.** A zone's offset is relative
+to ITS LIMB, so summing offset + halfHeight + radius answered *"how far does
+this capsule reach from its own arm"* — **1.45 studs** for a player, when the
+real reach from the root is ~3.3. The broadphase culls **from the root**, so the
+cull was tight. It never surfaced because the volume's own reach (7.5)
+dominated the sum, so nothing near the edge of range had been tested.
+
+Now measured in `bind` as (limb from root) + (zone from limb), padded 2×
+because that is a rest-pose reading and limbs move. Reads **6.67** now.
+
+**`idsOf` was a local declared after its first use**, so the instantaneous path
+threw `attempt to call a nil value` the first time anyone pressed the AOE key.
+Pre-existing, on a path nothing had exercised.
+
+### And a design that was built, drawn, and reversed
+
+Zones hanging off the body's **root** produced a rigid arrangement of capsules
+ignoring the pose — a mannequin riding the player. The reasoning was that a
+client-animated limb reaches the server ~0.104s stale, worth 4.7 studs at full
+swing speed. Real number, wrong one to design around:
+
+| Limb doing | Error | Arm capsule radius |
+|---|---|---|
+| walking | **0.30 studs** | **0.28** |
+| mid-swing | 4.68 studs | 0.28 |
+
+At the speeds a body spends nearly all its time at, the error is **under the
+capsule's own thickness.** *The test that catches it is: draw it and look.* It
+survived an hour of argument and died the instant it was rendered.
 
 ---
 

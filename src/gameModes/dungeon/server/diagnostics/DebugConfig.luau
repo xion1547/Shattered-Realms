@@ -154,8 +154,15 @@ function DebugConfig.publish()
         "[DebugConfig] on: %s | off: %s",
         #on > 0 and table.concat(on, ", ") or "nothing",
         #off > 0 and table.concat(off, ", ") or "nothing"))
-    print("    toggle live: select Workspace, edit the Debug* attributes -- "
-        .. "or workspace:SetAttribute(\"DebugSwingReport\", true) in the command bar")
+    print("    toggle live: select Workspace in the Explorer and edit the Debug* "
+        .. "attributes in Properties.")
+    -- THE COMMAND BAR RUNS AS THE CLIENT DURING A PLAY TEST, and this hint used
+    -- to omit that. Attributes do not replicate upward, so setting one from the
+    -- client sets it on a DataModel the server never reads -- silently, with the
+    -- command reporting success and the diagnostic looking broken. Cost an
+    -- evening on 2026-08-22.
+    print("    or the command bar SWITCHED TO SERVER (the dropdown beside it): "
+        .. "workspace:SetAttribute(\"DebugSwingReport\", true)")
 end
 
 return DebugConfig

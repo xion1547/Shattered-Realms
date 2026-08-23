@@ -275,3 +275,25 @@ limb layer only if something needs per-limb state that capsules cannot carry.
 
 **Where this goes:** `HitDetection.md` Part 4 (which describes the Spatial
 layer) and Part 7, plus both component headers.
+
+
+---
+
+## The Studio command bar runs as the CLIENT during a play test
+
+**Cost an evening on 2026-08-22.** Every `Debug*` flag is a Workspace
+attribute, and the documented way to flip one mid-session is:
+
+    workspace:SetAttribute("DebugSwingReport", true)
+
+Typed into the command bar during a play test, **that sets it on the CLIENT's
+DataModel.** Attributes do not replicate upward, so the server never sees it and
+the flag stays off — silently, with the command reporting success and the
+diagnostic looking broken.
+
+**The fix: switch the command bar to Server context** (the dropdown beside it),
+or select `Workspace` in the Explorer while running and edit the attribute in
+the Properties panel.
+
+`DebugConfig`'s own boot hint says "or workspace:SetAttribute(...) in the
+command bar" without mentioning the context. Worth amending.
