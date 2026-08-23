@@ -128,16 +128,18 @@ local function reportCandidate(entity, origin: CFrame, volume, at: number, now: 
     local wanted = math.max(0, now - at)
     local clamping = oldest < wanted
 
-    -- The hurtbox as the narrow phase saw it: at the REWOUND pose, because a
-    -- capsule leans with the body.
-    local capA, capB = spatial:endpoints(rewound)
-    local radius = spatial.radius
+    -- The hurtbox as the narrow phase saw it. A body is a LIST of capsules
+    -- now, so this reports the list rather than pretending there is one --
+    -- printing only the first zone would quietly hide the nine that decided
+    -- the miss.
+    local hurtbox = entity.hurtbox
 
     print(string.format("    %s %-10s live %s  rewound %s  drift %.2f",
         mark, id, vec(live and live.Position), vec(rewound.Position), drift))
 
-    print(string.format("         %-10s capsule %s..%s  r=%.2f  halfHeight=%.2f",
-        "", vec(capA), vec(capB), radius, spatial.halfHeight))
+    print(string.format("         %-10s hurtbox %d zone(s), reach %.2f",
+        "", hurtbox and hurtbox:zoneCount() or 0,
+        hurtbox and hurtbox:boundingRadius() or 0))
 
     -- Volume-relative geometry. The offset is applied first, exactly as
     -- Overlap.test does -- reporting against the un-offset anchor would make

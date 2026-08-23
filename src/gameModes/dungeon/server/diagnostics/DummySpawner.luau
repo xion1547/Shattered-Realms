@@ -134,8 +134,7 @@ local function spawnDummy(index: number)
     entity.model = model
 
     EntityService:register(entity)
-    SpatialService:attach(entity, shaft, HURTBOX_RADIUS, HURTBOX_HALF_HEIGHT,
-        HurtboxDefinitions.DUMMY)
+    SpatialService:attach(entity, shaft, HurtboxDefinitions.DUMMY)
 end
 
 function DummySpawner.spawnAll()

@@ -155,23 +155,16 @@ end
 -- it has to be reconstructed at the orientation they saw -- which is exactly
 -- why the ring buffer stores CFrames rather than positions.
 --
--- FALLS BACK TO THE SINGLE CAPSULE when a body has no hurtbox. Transitional:
--- resolution reads the zone list where one exists and the old
--- `radius`/`halfHeight` pair where it does not, so nothing stops being
--- hittable mid-migration. `NextSteps.md` item 3 deletes the fallback and the
--- fields together.
+-- NO HURTBOX MEANS NOT HITTABLE, and that is deliberate rather than defensive.
+-- The attached set IS the target set, and a body registers by declaring a shape
+-- -- so a hurtbox-less entity in that set is a wiring bug, and returning false
+-- surfaces it as "nothing is hittable" rather than hiding it behind an old
+-- single-capsule guess that no longer exists.
 function TargetResolution._hits(entity, spatial, origin: CFrame, volume, at: number): boolean
     local hurtbox = entity.hurtbox
 
     if not hurtbox then
-        -- nil pose means never sampled -- attached this frame, or already
-        -- detached.
-        local pose = spatial:poseAt(at)
-        if not pose then
-            return false
-        end
-        local capA, capB = spatial:endpoints(pose)
-        return Overlap.test(origin, volume, capA, capB, spatial.radius)
+        return false
     end
 
     for zone = 1, hurtbox:zoneCount() do

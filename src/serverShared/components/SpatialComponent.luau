@@ -33,8 +33,8 @@
 -- clears every ring, one setAnchor rebuilds them all, and there is no teardown
 -- to keep in sync because there is one owner.
 --
--- WHAT THIS FILE IS *NOT*: HurtboxComponent holds SHAPE -- a capsule of radius
--- r offset from a named limb, true regardless of where the body is or when.
+-- WHAT THIS FILE IS *NOT*: HurtboxComponent holds SHAPE -- a capsule offset
+-- from a named limb, true regardless of where the body is or when.
 -- This holds POSITION OVER TIME. The test that separates them: does it change
 -- while the game runs? Shape does not. Position does.
 --
@@ -112,17 +112,6 @@ function SpatialComponent.new(historyLength: number?)
 
     return setmetatable({
         anchor = nil,
-        radius = 0,
-
-        -- HALF THE LENGTH OF THE CAPSULE'S STRAIGHT SECTION, along the
-        -- anchor's LOCAL Y. Zero means the capsule degenerates to a sphere.
-        --
-        -- THE OLD SINGLE-CAPSULE HURTBOX, AND IT IS ON ITS WAY OUT. Resolution
-        -- still tests it while HurtboxComponent's zone list is drawn but not
-        -- yet tested against; `NextSteps.md` item 3 deletes this, `radius`,
-        -- and `endpoints` together. Two shapes describing one body is a
-        -- labelled transitional state, not a design.
-        halfHeight = 0,
 
         _tracks = tracks,
         _length = length,
@@ -193,27 +182,22 @@ function SpatialComponent:_advance(t: number): number?
 end
 
 -- Called by SpatialService when an entity enters the world. The anchor is
--- set here rather than in the constructor because an entity exists before
--- its body does -- a player's PlayerEntity is built on join, and their
--- character spawns some time afterwards.
+-- set here rather than in the constructor because an entity exists before its
+-- body does -- a player's PlayerEntity is built on join, and their character
+-- spawns some time afterwards.
 --
--- THE ANCHOR IS TRACKED BY THIS CALL. A body that never calls `trackParts` --
--- every dummy, and anything without a hitzone list -- therefore behaves
--- exactly as it did before this component tracked more than one part: one
--- ring, one pose array, `poseAt(t)` with no second argument.
-function SpatialComponent:setAnchor(anchor: BasePart, radius: number, halfHeight: number?)
+-- THE ANCHOR IS TRACKED BY THIS CALL, so a body with no extra limbs still has
+-- exactly one pose array and `poseAt(t)` works with no second argument.
+--
+-- IT NO LONGER TAKES A SHAPE. `radius` and `halfHeight` lived here when a body
+-- was one capsule; shape is HurtboxComponent's, and this file holds position
+-- over time. Two components describing one body was a transitional state and
+-- this is the end of it.
+function SpatialComponent:setAnchor(anchor: BasePart)
     assert(typeof(anchor) == "Instance" and anchor:IsA("BasePart"),
         "[SpatialComponent] anchor must be a BasePart")
-    assert(type(radius) == "number" and radius > 0,
-        "[SpatialComponent] hurtbox radius must be positive")
-
-    local half = halfHeight or 0
-    assert(type(half) == "number" and half >= 0,
-        "[SpatialComponent] halfHeight must be zero or positive")
 
     self.anchor = anchor
-    self.radius = radius
-    self.halfHeight = half
 
     -- Clear BEFORE assigning: clearHistory drops every extra track, and the
     -- anchor's own array is emptied with it.
@@ -252,72 +236,6 @@ function SpatialComponent:trackedCount(): number
         count += 1
     end
     return count
-end
-
--- The capsule's two segment endpoints in WORLD space, given a pose.
---
--- THE OLD SINGLE-CAPSULE PATH. Dies with `radius`/`halfHeight` when resolution
--- moves to the zone list -- HurtboxComponent:endpoints is its replacement and
--- takes a zone index.
---
--- Returns the same point twice when `halfHeight` is zero -- a zero-length
--- segment, which every Overlap function treats as a sphere. Callers never
--- branch on shape.
---
--- ALONG LOCAL Y, so the capsule leans when the body leans. `cf * offset`
--- transforms a local offset into world space, which is what carries the
--- anchor's rotation into the result -- using `cf.Position + offset` instead
--- would produce a capsule that stays stubbornly world-upright while the body
--- turns, and that error is invisible until something is knocked over.
-function SpatialComponent:endpoints(cf: CFrame): (Vector3, Vector3)
-    local half = self.halfHeight
-    if half <= 0 then
-        local p = cf.Position
-        return p, p
-    end
-    local offset = Vector3.new(0, half, 0)
-    return cf * offset, cf * -offset
-end
-
--- NO CALLERS AS OF 2026-08-22, including in tests. Written ahead of the
--- hitzone list and never wired up. Flagged out loud because it was quoted in
--- conversation as though it described how hurtboxes are built today, and it
--- describes how ONE OF THREE routes would build them once something calls it.
---
--- IT IS THE DEFAULT, NOT THE POLICY. A hitzone may derive its capsule from a
--- part (this function), declare the numbers in the Content Layer, or name a
--- hurtbox part authored by hand inside the rig. All three reduce to an anchor
--- plus a radius plus a halfHeight, so nothing downstream can tell which was
--- used -- which is what makes the choice per-hitzone and reversible.
---
--- AND IT LIES ON SOME PARTS. `Size` is the AABB in the part's LOCAL axes, so a
--- diagonal limb, a curved horn, a flat plate or a part with one outlying spike
--- all derive badly. Use the overlay to check, or use one of the other routes.
---
--- Returns `radius, halfHeight, axis`. A roughly cubic part yields
--- `halfHeight == 0`, which is a sphere -- correct, and it falls out of the
--- arithmetic rather than needing a special case.
-function SpatialComponent.capsuleFromSize(size: Vector3): (number, number, string)
-    local axis, longest = "Y", size.Y
-    if size.X > longest then
-        axis, longest = "X", size.X
-    end
-    if size.Z > longest then
-        axis, longest = "Z", size.Z
-    end
-
-    local a, b
-    if axis == "X" then
-        a, b = size.Y, size.Z
-    elseif axis == "Y" then
-        a, b = size.X, size.Z
-    else
-        a, b = size.X, size.Y
-    end
-
-    local radius = math.min(a, b) * 0.5
-    local halfHeight = math.max(0, longest * 0.5 - radius)
-    return radius, halfHeight, axis
 end
 
 function SpatialComponent:clearAnchor()

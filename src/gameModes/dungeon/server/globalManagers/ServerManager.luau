@@ -178,17 +178,16 @@ function ServerManager:_bindCharacter(player, entity)
     local function attach(character)
         local root = character:WaitForChild("HumanoidRootPart", 10)
         if root then
-            SpatialService:attach(entity, root, PLAYER_HURTBOX_RADIUS, PLAYER_HURTBOX_HALF_HEIGHT,
-                HurtboxDefinitions.PLAYER_R15)
+            SpatialService:attach(entity, root, HurtboxDefinitions.PLAYER_R15)
 
             -- Printed on every respawn, not just the first: attach clears the
             -- history buffer, so this line is also the marker for "rewind has
             -- nothing to reach back to yet" if a swing lands immediately after.
             print(string.format(
-                "[ServerManager] %s attached to %s  capsule r=%.2f halfHeight=%.2f "
-                    .. "(total height %.1f)  rootSize=%s",
-                player.Name, root.Name, PLAYER_HURTBOX_RADIUS, PLAYER_HURTBOX_HALF_HEIGHT,
-                PLAYER_HURTBOX_HALF_HEIGHT * 2 + PLAYER_HURTBOX_RADIUS * 2,
+                "[ServerManager] %s attached to %s  %d hurtbox zones, reach %.2f  "
+                    .. "rootSize=%s",
+                player.Name, root.Name,
+                entity.hurtbox:zoneCount(), entity.hurtbox:boundingRadius(),
                 tostring(root.Size)))
         else
             warn(string.format(

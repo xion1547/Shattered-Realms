@@ -165,8 +165,7 @@ end
 -- > (HurtboxDefinitions), and they get checked by LOOKING at them before
 -- > anything hits with them. When TargetResolution loops zones, the single
 -- > capsule and these two parameters go away together.
-function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHeight: number?,
-    zones: { any }?)
+function SpatialService:attach(entity, anchor: BasePart, zones: { any })
 
     assert(type(entity) == "table" and entity.spatial,
         "[SpatialService] entity has no Spatial component")
@@ -184,6 +183,15 @@ function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHei
     -- Added for a diagnostic's stub entity; it holds for every real one too.
     assert(entity.identity, "[SpatialService] entity has no Identity component")
 
+    -- A ZONE LIST IS REQUIRED, NOT OPTIONAL, and that is the end of the
+    -- transitional state. The attached set IS the target set -- anything
+    -- hittable is by definition something that registered a shape -- so a body
+    -- attaching without one would sit in the candidate list forever and never
+    -- overlap anything, which reads as broken detection rather than as missing
+    -- configuration.
+    assert(type(zones) == "table" and #zones > 0,
+        "[SpatialService] attach needs a hurtbox zone list -- see HurtboxDefinitions")
+
     -- The buffer length is chosen by whoever built the component, but how
     -- much history this service expects is chosen here. Checked at attach
     -- rather than trusted, because the failure is silent: a buffer too short
@@ -195,13 +203,13 @@ function SpatialService:attach(entity, anchor: BasePart, radius: number, halfHei
         "[SpatialService] Spatial buffer holds %d samples; %d needed to span %.2fs at %dHz",
         available, HISTORY_LENGTH, HISTORY_SECONDS, SAMPLE_HZ))
 
-    entity.spatial:setAnchor(anchor, radius, halfHeight)
+    entity.spatial:setAnchor(anchor)
 
     -- Rebuilt on every attach rather than only when absent, because attach is
     -- also what runs on respawn -- and a body that came back a different shape
     -- with a stale zone list is exactly the silent wrongness this layer
     -- specialises in.
-    if zones then
+    do
         local hurtbox = HurtboxComponent.new(zones)
 
         -- Bound against the anchor's PARENT -- the character Model or the rig
@@ -458,9 +466,7 @@ function SpatialService:candidatesNear(position: Vector3, radius: number, margin
             -- than a sphere of the same radius, so culling on thickness alone
             -- would drop a tall target whose head was inside the volume.
             local hurtbox = entity.hurtbox
-            local extent = hurtbox and hurtbox:boundingRadius()
-                or (spatial.radius + spatial.halfHeight)
-            local limit = reach + extent
+            local limit = reach + (hurtbox and hurtbox:boundingRadius() or 0)
             local offset = cf.Position - position
             -- Squared throughout: comparing against limit^2 is the same
             -- test without the square root, and this runs once per attached

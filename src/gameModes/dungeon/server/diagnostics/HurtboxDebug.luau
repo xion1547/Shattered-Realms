@@ -4,12 +4,11 @@
 -- thing you HIT can be compared against the thing you SEE.
 --
 -- THIS IS THE INSTRUMENT FOR THE ONE BUG NOBODY CAN SPOT BY PLAYING.
--- HitDetection.md §7.1: the dummies are 4x5x4 bodies wearing a 2.5-radius
--- sphere, which is 5 studs across -- 25% too wide. A player's is worse, ~2.5x
--- too wide against a 2-stud body. Neither is visible in a normal session: a
--- swing that connects a stud early looks exactly like a swing that connected.
--- Turning this on is what makes the gap a thing you can see instead of a
--- number in a document.
+-- A swing that connects a stud early looks exactly like a swing that
+-- connected, so the gap between a body and its hurtbox is invisible while
+-- playing and obvious the moment it is drawn. Turning this on is what makes it
+-- a thing you can see instead of a number in a document -- HitDetection 0.5
+-- makes that a requirement rather than a nicety.
 --
 -- A MODULE, NOT A .server SCRIPT, for DummySpawner's reason: Roblox does not
 -- order independent Scripts, and anything that touches the world the test
@@ -47,9 +46,9 @@
 -- the thing anyone was trying to look at.
 --
 -- NOTHING WAS EVER WRONG WITH THE HURTBOX. A hurtbox is not an object that can
--- fall behind a body -- it is `anchor.CFrame` plus two numbers, evaluated at
--- the moment a query asks (SpatialComponent:endpoints). There is no stored
--- position to drift. What lagged was the PICTURE.
+-- fall behind a body -- it is a limb's pose plus an offset and two numbers,
+-- evaluated at the moment a query asks (HurtboxComponent:endpoints). There is
+-- no stored position to drift. What lagged was the PICTURE.
 --
 -- THE FIX IS TO STOP DRAWING AND START ATTACHING. The pieces are now
 -- unanchored, parented under the anchor part, and joined to it with a
@@ -266,10 +265,8 @@ local function build(entity, spatial, serverView: boolean)
         -- decide whether the overlay still describes the body, so a respawn,
         -- a resize or a mode flip rebuilds instead of quietly lying.
         anchor = anchor,
-        radius = spatial.radius,
-        halfHeight = spatial.halfHeight,
         hurtbox = hurtbox,
-        zoneCount = hurtbox and hurtbox:zoneCount() or 1,
+        zoneCount = hurtbox:zoneCount(),
         serverView = serverView,
         zones = {},
         all = {},
@@ -287,25 +284,20 @@ local function build(entity, spatial, serverView: boolean)
         -- trailing the player in the first place, applied per zone.
         local zoneAnchor = anchor
 
-        if hurtbox then
-            local bound = hurtbox:anchorFor(index)
-            if bound and bound.Parent then
-                zoneAnchor = bound
-            end
-
-            -- Endpoints come from the LIMB's pose, so the drawing matches
-            -- where the zone actually is rather than where the root is.
-            capA, capB, radius = hurtbox:endpoints(index, zoneAnchor.CFrame)
-        else
-            capA, capB = spatial:endpoints(pose)
-            radius = spatial.radius
+        local bound = hurtbox and hurtbox:anchorFor(index)
+        if bound and bound.Parent then
+            zoneAnchor = bound
         end
+
+        -- Endpoints come from the LIMB's pose, so the drawing matches where
+        -- the zone actually is rather than where the root is.
+        capA, capB, radius = hurtbox:endpoints(index, zoneAnchor.CFrame)
 
         -- The zone's NAME goes in the part name, not just its index. When a
         -- capsule is in the wrong place, "ArmLowerL is too long" is a sentence
         -- you can act on; "zone 4" means opening a file to find out which one
         -- that is.
-        local label = hurtbox and hurtbox:zoneName(index) or "Body"
+        local label = hurtbox:zoneName(index)
         local a, b, shaft = drawCapsule(
             string.format("HB_%s_%s", id, label), capA, capB, radius, serverView, zoneAnchor)
 
@@ -332,8 +324,6 @@ end
 local function isStale(pieces, spatial, serverView: boolean, hurtbox): boolean
     return pieces.serverView ~= serverView
         or pieces.anchor ~= spatial.anchor
-        or pieces.radius ~= spatial.radius
-        or pieces.halfHeight ~= spatial.halfHeight
         or pieces.hurtbox ~= hurtbox
         -- Destroyed out from under us: a respawn took the character, and with
         -- it the welded pieces parented to its root.
@@ -349,17 +339,12 @@ local function reposition(pieces, spatial, hurtbox)
     end
 
     for index, zone in ipairs(pieces.zones) do
-        local capA, capB
-        if hurtbox then
-            -- The limb's live pose, matching what build() drew from. Reading
-            -- the root here instead would make ServerView disagree with the
-            -- welded mode about where a zone is, which would look like a
-            -- latency finding and be a bug in this file.
-            local zonePose = (zone.anchor and zone.anchor.Parent and zone.anchor.CFrame) or pose
-            capA, capB = hurtbox:endpoints(index, zonePose)
-        else
-            capA, capB = spatial:endpoints(pose)
-        end
+        -- The limb's live pose, matching what build() drew from. Reading the
+        -- root here instead would make ServerView disagree with the welded
+        -- mode about where a zone is, which would look like a latency finding
+        -- and be a bug in this file.
+        local zonePose = (zone.anchor and zone.anchor.Parent and zone.anchor.CFrame) or pose
+        local capA, capB = hurtbox:endpoints(index, zonePose)
 
         zone.capA.CFrame = CFrame.new(capA)
         zone.capB.CFrame = CFrame.new(capB)
@@ -417,20 +402,18 @@ local function logEntity(entity, spatial, hurtbox)
     print(string.format(
         "[HurtboxLog] %s  hurtbox=%s  state=%s",
         id,
-        hurtbox and string.format("%d zones", hurtbox:zoneCount())
-            or "NONE -- falling back to the single capsule",
+        string.format("%d zones", hurtbox:zoneCount()),
         humanoidState))
     print(string.format(
         "    root world (%.1f, %.1f, %.1f)   moved %.2f studs since last block",
         pose.Position.X, pose.Position.Y, pose.Position.Z, rootMoved))
 
-    local count = hurtbox and hurtbox:zoneCount() or 1
+    local count = hurtbox:zoneCount()
     local rel = {}
 
     for index = 1, count do
         local capA, capB, radius
         local label, ridden
-        if hurtbox then
             -- READ FROM THE LIMB, not the root. Reading the root here would
             -- report zero rel-root drift on every zone forever, which is
             -- exactly the symptom this log exists to distinguish -- the
@@ -440,10 +423,7 @@ local function logEntity(entity, spatial, hurtbox)
             capA, capB, radius = hurtbox:endpoints(index, zonePose)
             label = hurtbox:zoneName(index)
             ridden = (bound and bound.Parent) and bound.Name or "ROOT (unbound)"
-        else
-            capA, capB = spatial:endpoints(pose)
-            radius, label, ridden = spatial.radius, "Body", "ROOT"
-        end
+
 
         -- The capsule's centre is the honest single number for "where is this
         -- zone" -- an endpoint moves when the zone merely rotates.

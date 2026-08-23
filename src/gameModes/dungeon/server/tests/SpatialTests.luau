@@ -72,7 +72,7 @@ return function()
         -- and it is what SpatialService's self-healing detach keys off.
         local part = makeAnchor()
         local spatial = SpatialComponent.new()
-        spatial:setAnchor(part, 2)
+        spatial:setAnchor(part)
         a.isTrue(spatial:isAnchored())
 
         part.Parent = nil
@@ -81,15 +81,13 @@ return function()
         part:Destroy()
     end)
 
-    t:case("setAnchor rejects a non-part and a non-positive radius", function(a)
+    t:case("setAnchor rejects anything that is not a BasePart", function(a)
+        -- The radius checks that used to live here went with the shape.
+        -- SpatialComponent holds position over time; a malformed capsule is
+        -- HurtboxComponent's to reject now, and it does.
         local spatial = SpatialComponent.new()
-        a.throws(function() spatial:setAnchor(nil, 2) end, "must be a BasePart")
-        a.throws(function() spatial:setAnchor(Instance.new("Folder"), 2) end, "must be a BasePart")
-
-        local part = makeAnchor()
-        a.throws(function() spatial:setAnchor(part, 0) end, "must be positive")
-        a.throws(function() spatial:setAnchor(part, -1) end, "must be positive")
-        part:Destroy()
+        a.throws(function() spatial:setAnchor(nil) end, "must be a BasePart")
+        a.throws(function() spatial:setAnchor(Instance.new("Folder")) end, "must be a BasePart")
     end)
 
     t:case("re-anchoring clears the previous body's history", function(a)
@@ -99,11 +97,11 @@ return function()
         local first, second = makeAnchor(), makeAnchor()
         local spatial = SpatialComponent.new()
 
-        spatial:setAnchor(first, 2)
+        spatial:setAnchor(first)
         spatial:record(1, CFrame.new(50, 0, 0))
         a.equal(spatial:sampleCount(), 1)
 
-        spatial:setAnchor(second, 2)
+        spatial:setAnchor(second)
         a.equal(spatial:sampleCount(), 0, "the new body starts with no past")
         a.isNil(spatial:poseAt(1))
 
