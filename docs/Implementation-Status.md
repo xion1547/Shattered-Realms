@@ -219,13 +219,14 @@ survived an hour of argument and died the instant it was rendered.
 | Question | Why it is parked | What answers it |
 |---|---|---|
 | ~~Does a server script see a client-animated limb move?~~ | **CLOSED 2026-08-21.** Yes — trailing by ~0.104s, which is `INTERPOLATION_CONSTANT` behaving exactly as specified. Measured by `LimbProbe`, since retired | — |
-| ~~Derive hurtboxes from part sizes, or hand-place them?~~ | **CLOSED 2026-08-22.** Both, per body. Players are typed in `HurtboxDefinitions` because they wear a stock rig; bosses get parts placed by eye and read at spawn | — |
+| ~~Derive hurtboxes from part sizes, or hand-place them?~~ | **CLOSED 2026-08-22 — not a fork.** Both, mixable per zone. Every route ends as an anchor name plus an offset and two numbers, and nothing downstream can tell which produced a list. Players are typed in `HurtboxDefinitions` because they wear a stock rig with no `.rbxm` of ours to read; bosses get parts placed by eye and read at spawn | — |
+| Which route to reach for on the first rigged model? | The mechanism question above is closed; this is the *workflow* half and it is genuinely open. `capsuleFromSize` was deleted with zero callers, so neither reader is built and nothing is committed | The first rigged model. Derive the plain limbs, hand-place anything whose `Part.Size` lies, and check both with `DebugHurtboxes` |
 | Is `GetNetworkPing()` a round trip or one way? | The **unit** is settled (seconds, measured). The ratio is not, and is low-stakes: ~12ms against a 0.1s constant. `PING_TO_ROUND_TRIP` stays at 2, the over-rewinding guess | A playtest above ~200ms ping that feels wrong |
 | Does `MAX_ENTITY_SPEED = 120` need raising? | Nothing in the world moves near it. **A boss that flies faster gets silently culled from its own hit test** | The first fast boss. `NextSteps.md` |
 | Is `MAX_REWIND = 0.5` right? | Already 2× the shooter norm; no player data to tune against | Ping distribution from real sessions |
 | Does the broadphase need spatial partitioning? | ~100 entities is microseconds of linear scan | It appearing in a profile, or attached count passing ~500 |
 | Does single-target need a distance sort? | With `maxTargets = 1` and no client hint, the pick is arbitrary order | The first real single-target skill |
-| Derive hurtboxes from part sizes, or hand-place them in the rig? | **Not a fork** — HitDetection §7.2.3 settles that both routes reduce to an anchor plus two numbers, mixable per hitzone. `capsuleFromSize` exists with **zero callers**, so nothing is committed either way | The first rigged model. Derive the plain limbs, hand-place anything whose `Part.Size` lies, and check both with `DebugHurtboxes` |
+| Is a bound on client-driven zone displacement needed? | A client owns its own limbs, so it can move its own zones. HitDetection 7.4 calls this "a bound, not a ban" — **no bound is implemented**, and a comment in `HurtboxDefinitions` claimed one was until 2026-08-23. What a liar wins is a displaced arm capsule on the defensive side, where "defense is generous" already errs their way | A body whose zones reach far enough from the root that displacing one meaningfully changes what can hit it |
 
 ---
 
@@ -233,7 +234,7 @@ survived an hour of argument and died the instant it was rendered.
 
 | Tool | State | Use |
 |---|---|---|
-| `diagnostics/SwingReport.luau` | Present, uncalled | Require it in CombatService and call `report(player, event, query, hits)` for a per-swing breakdown |
+| `diagnostics/SwingReport.luau` | flag `DebugSwingReport`, **off**. Wired on **both** paths — instantaneous and per-sweep | Per-swing breakdown: latency, rewind, what the broadphase kept, and every candidate with the numbers it was judged on. **A sweep reports once, at the end**, reconstructing one moment of it — so its angle column is widened by the arc the swing actually covered and says so on the line |
 | `_toDelete/` at the repo root | **retired, outside `src/`** | `LimbProbe`, `PingProbe`, `SweepTrace`, `EnemyAttackDemo`. Rojo does not sync that folder, so none of it can run. Each answered its question and the answer is recorded elsewhere; git has them if any is wanted back |
 | `diagnostics/DummySpawner.luau` | Called from `Main.server.luau` | Ten anchored dummies. Delete when ZoneService spawns real encounters |
 | `diagnostics/HurtboxDebug.luau` | flag `DebugHurtboxes`, **on** | Draws every zone as a cyan capsule, **welded to its own limb** so it follows the pose and cannot trail the body. **Turn this on for every model-authoring session** — it is the only way to see whether a zone list actually covers a rig |

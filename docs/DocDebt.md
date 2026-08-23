@@ -7,7 +7,13 @@ does not chase code that is still moving. Pruned whenever a doc pass happens.
 An entry that would need re-deriving before it could be acted on is not
 detailed enough — fix the entry, not just the doc.
 
-Last swept: **2026-08-15**
+Last swept: **2026-08-23** — a full pass over the nine core documents against
+the hurtbox rebuild. What that pass found, and the lesson worth keeping:
+
+> **The most dangerous stale text is not a doc that is out of date. It is a
+> doc that names fields the code no longer has, or a comment that explains
+> away the exact symptom its own diagnostic exists to surface.** Both were
+> found on this pass, and both are recorded below rather than only fixed.
 
 `Implementation-Status.md` is the companion to this file: that one says what
 works, this one says what the docs get wrong about it. The status doc goes
@@ -18,15 +24,17 @@ both true only of the day they were written.
 
 ## HitDetection.md
 
+**Swept 2026-08-23.** The Part 13 File Map, Part 14 Current State, Part 7's
+header, 7.1, 7.5, and Part 15's first gap were all corrected in place — they
+described the pre-rebuild code. Remaining known-stale rows:
+
 | Where | Stale | Should say |
 |---|---|---|
-| §11 File Map | `components/Spatial.luau` | `components/SpatialComponent.luau` — from the `XComponent` rename |
-| §11 File Map | `resolution/TargetResolution.luau`, `resolution/TargetQuery.luau`, status UNBUILT | both live under `resolution/targeting/` now, and both are **BUILT** |
-| §11 File Map | `HitVolume.luau`, `Overlap.luau` status UNBUILT | **BUILT** |
-| §11 prose | "`tests/SpatialTests.luau` holds 24 cases" | still 24, but `tests/targeting/` now adds 27 more across four files |
-| §11 prose | PingProbe described as deletable | keep it until the round-trip-vs-one-way sub-question in §6 is closed — it is the only instrument for that. It is now `ENABLED = false` by default |
-| §11 File Map | missing three files | `diagnostics/SwingReport.luau`, `diagnostics/DummySpawner.luau` (a module called from `Main.server.luau`, **not** a Script — see the fragility note below), and `client/systems/InputSystem.luau` |
-| §11 File Map | `CombatService` listed as owing the DETECT phase | DETECT is **BUILT** and verified live; what it still owes is the RESOLVE/COMMIT/ANNOUNCE loop over the hits |
+| Part 13 File Map | `resolution/TargetResolution.luau`, `resolution/TargetQuery.luau`, status UNBUILT | both live under `resolution/targeting/` now, and both are **BUILT** |
+| Part 13 prose | "`tests/SpatialTests.luau` holds 24 cases" | the suite is **206 passing**; `tests/targeting/` adds cases across four files. This row goes stale every session and should probably just point at `Implementation-Status.md` instead of carrying a number |
+| Part 13 File Map | missing several files | `diagnostics/SwingReport.luau`, `diagnostics/HurtboxDebug.luau`, `diagnostics/DebugConfig.luau`, `diagnostics/DummySpawner.luau` (a module called from `Main.server.luau`, **not** a Script — see the fragility note below), and `client/systems/InputSystem.luau` |
+| Part 13 File Map | `CombatService` listed as owing the DETECT phase | DETECT is **BUILT** and verified live; what it still owes is the RESOLVE/COMMIT/ANNOUNCE loop over the hits |
+| Part 13 prose | PingProbe described as deletable | it is in `_toDelete/` and **cannot run** — Rojo does not sync that folder. The round-trip-vs-one-way sub-question is still open and this was its only instrument, so restoring it from git is the move if that question ever matters |
 
 ### Already edited, awaiting review
 
@@ -185,6 +193,33 @@ playback module ships.
 
 ---
 
+## Resolved on 2026-08-23 — do not re-derive
+
+**`Hurtboxes.md` was swept in full and was the worst offender in the repo.**
+Written 2026-08-20 against code that was replaced two days later, it defined a
+hurtbox as `spatial.anchor` + `spatial.radius` + `spatial.halfHeight` with
+`SpatialComponent:endpoints(cf)` — **four names that no longer exist**. It also
+carried a Part whose status was "blocked on a test" the `LimbProbe` had already
+answered, and closed with *"next physical step: run Part 8's test."*
+
+**Naming deleted fields is a distinct failure from being out of date**, and it
+is the one worth recognising: a doc that is merely behind describes something
+real, just older. A doc naming removed identifiers sends a reader hunting for
+code that is not there, and they will assume they are the ones who are lost.
+
+Its Part 7 also *argued for* the design that was reversed — per-limb history in
+`HurtboxComponent` rather than keyed into `SpatialComponent`. Both positions are
+now kept in 7.4 with the argument that beat it (compare the bookkeeping;
+`PetRoster` → `Equipment`), per `WorkingAgreement.md`'s corollary.
+
+**Also corrected in the same pass:** `AssetPipeline.md`'s closing line ("the
+group does not exist yet"), `Architecture-Reference.md`'s component registry
+(`Spatial` still listed as holding a hurtbox radius, `Hurtbox` absent
+entirely), and `Implementation-Status.md`'s claim that `SwingReport` was
+present-but-uncalled.
+
+---
+
 ## Resolved on 2026-08-16 — do not re-derive
 
 **`HitDetection.md` §7 was rewritten twice in one session** and now says
@@ -223,17 +258,25 @@ with the design in prose and disagrees with it in its schema.
 EventTape tests use `AnimationEvent` as their round-trip fixture, so removing
 it drops real coverage of an unrelated system. Replace the fixture first.
 
-### Not a doc problem, a decision that blocks work
+### ~~Not a doc problem, a decision that blocks work~~ — CLOSED
 
-**The animation asset owner has not been chosen** (personal account vs group).
-It gates the first upload, and getting it wrong means re-uploading every
-animation in the game. `Animation.md` §2 has the detail.
+**The animation asset owner was chosen on 2026-08-16 (a GROUP), and the group
+was created on 2026-08-22 with the experience transferred to it.** Nothing is
+blocked. `AssetPipeline.md` Part 9 and `NextSteps.md` item 2 both say so now;
+this entry stood stale through both halves of the decision.
+
+**Every upload from here goes under the group, meshes included.** The cost of
+getting that wrong is not a setting to change later — a personal-account asset
+does not transfer, it gets re-uploaded, and every id referencing one changes.
 
 ---
 
-## Spatial vs Hurtbox — the distinction is settled but undocumented
+## Spatial vs Hurtbox — settled, and now written down
 
-**Decided 2026-08-22 in conversation; not yet written into any document.**
+**Decided 2026-08-22 in conversation. WRITTEN 2026-08-23** into
+`Architecture-Reference.md` Part 7's component registry, `Hurtboxes.md` Part 7
+(including the reversed half, 7.4), and both component headers. Kept here as
+the compressed version, and because the *reasoning* is the reusable part.
 
 The question was whether per-limb position history should be a child component
 of `SpatialComponent`, since `SpatialComponent` was conceived as "the entity as
@@ -273,8 +316,12 @@ of one capsule. It does not demand one: breaking a horn is *shrink or remove
 the capsules and swap the model*, which the flat list already expresses. Add a
 limb layer only if something needs per-limb state that capsules cannot carry.
 
-**Where this goes:** `HitDetection.md` Part 4 (which describes the Spatial
-layer) and Part 7, plus both component headers.
+**Done 2026-08-23:** `HitDetection.md` Part 4 carried the old shape
+("`radius`, `halfHeight` — the capsule") and an `attach(entity, anchor, radius,
+halfHeight)` signature that no longer exists. Both corrected, and the Part now
+carries the shape-vs-position split plus the two invariants that were only in
+code comments — one shared timeline across tracked parts, and why the anchor's
+poses stay a plain field rather than a map entry.
 
 
 ---
@@ -295,5 +342,58 @@ diagnostic looking broken.
 or select `Workspace` in the Explorer while running and edit the attribute in
 the Properties panel.
 
-`DebugConfig`'s own boot hint says "or workspace:SetAttribute(...) in the
-command bar" without mentioning the context. Worth amending.
+`DebugConfig`'s boot hint now names the Server context explicitly. **Amended.**
+
+---
+
+## Two comments that explained away their own diagnostic — FIXED 2026-08-23
+
+**The same family as the `EventRouter` trap above, and worse in one specific
+way: these were the documentation of a debugging tool, telling a reader that
+the symptom the tool exists to surface was working as designed.**
+
+`DebugConfig.luau`'s `HurtboxLog` entry and `HurtboxDebug.luau`'s logging
+header both said:
+
+> *"REL ROOT stays fixed → zones are anchored to the root ... Limbs animating
+> do not move them, and that is not a bug."*
+
+That was true for about six hours on 2026-08-22, under the root-anchored design
+that was built and reversed the same day. Zones ride their own limbs now, so a
+zone whose rel-root drift stays `0.00` through an animation **is** a bug — it
+fell back to the root, which means its limb name is not on that rig.
+
+Anyone debugging a genuinely broken anchor would have read that comment and
+stopped looking. `Implementation-Status.md` said the opposite and was correct;
+the two disagreed for a day.
+
+*The lesson, and it generalises past this instance:* **when a design is
+reversed, grep the diagnostics for it before grepping the docs.** A stale
+design doc misleads someone reading about the system. A stale diagnostic
+comment misleads someone actively debugging it, at the moment they are most
+likely to trust it.
+
+---
+
+## A comment asserting a safety property the code does not have — FIXED 2026-08-23
+
+`HurtboxDefinitions.luau` claimed that a client's ability to displace its own
+hurtbox zones was:
+
+> *"Bounded rather than banned (HitDetection 7.4) by a clamp on how far a zone
+> may sit from the root."*
+
+**There is no such clamp.** Not in that file, not in `HurtboxComponent`, not in
+`SpatialService`, not anywhere — `grep -rn "clamp" src/` finds only floating
+point guards in `Overlap` and unrelated resource clamping. HitDetection 7.4 says
+"a bound, not a ban" as a *design position*; nothing implemented it.
+
+The comment has been replaced with what is actually true (the displacement is
+accepted, not bounded), why that is acceptable today (an arm capsule is radius
+0.28, on the defensive side, where "defense is generous" already errs the
+player's way), and the trigger that would make it worth building.
+
+*The lesson:* **a comment asserting a security or safety property is a claim
+about code, and claims about code get grepped.** This one had never been —
+which is exactly how it survived. Worse than an absent comment, because it
+stops the next person from checking too.

@@ -24,9 +24,21 @@
 > this document is authoritative on the *procedure*.
 >
 > **Status tags** are the same four `Architecture-Reference.md` uses —
-> **SETTLED**, **PROVISIONAL**, **UNBUILT**, **SUPERSEDED**. Read them. Most of
-> this document is UNBUILT on purpose: the design is decided and the code is
-> one capsule per entity.
+> **SETTLED**, **PROVISIONAL**, **UNBUILT**, **SUPERSEDED**. Read them.
+>
+> **REVISED 2026-08-23, and the revision was large.** This document was written
+> on 2026-08-20, when the code was one capsule per entity and `HurtboxComponent`
+> did not exist. Both changed on 2026-08-22 — the zone list was built, per-zone
+> history landed inside `SpatialComponent`, resolution started testing zones,
+> and the single capsule was deleted. Every passage describing a hurtbox as
+> `spatial.radius` + `spatial.halfHeight` was **describing code that has since
+> been removed**, which is worse than being out of date: it named fields a
+> reader would go looking for and not find.
+>
+> The parts that were *decisions* survived intact. The parts that were
+> *descriptions of the code* are rewritten. Where a decision was reversed —
+> Part 7's argument for splitting the component — the old argument is kept with
+> what beat it, per `WorkingAgreement.md`.
 >
 > **And the same standing rule applies.** Nothing here is an axiom. If a
 > concrete decision conflicts with something written here, question the
@@ -43,7 +55,7 @@
 5. Authoring One By Hand, Step By Step
 6. The Export Round Trip — Why Nothing Needs Repositioning
 7. `HurtboxComponent` — What It Owns, And Why It Is Its Own Thing
-8. History And Rewind — The Part That Is Blocked On A Test
+8. History And Rewind — The Part That Was Blocked On A Test
 9. Rejected Designs
 10. Current State
 
@@ -66,8 +78,18 @@ The only calibration worth memorising:
 |---|---|
 | An R15 character | ~**5 studs** tall, ~**2 studs** wide |
 | A default character's head | ~1 stud |
-| The current player hurtbox | radius 1.5, halfHeight 1.5 → 6 studs tall, 3 wide |
+| A player's head zone | radius 0.60, halfHeight 0 — a sphere |
+| A player's forearm zone | radius 0.26, halfHeight 0.50 |
+| A player's torso zone | radius 0.70, halfHeight 0.55 |
+| ~~The old single player capsule~~ | radius 1.5, halfHeight 1.5 → 6 tall, 3 wide. **Deleted 2026-08-22** — over twice the body's width at every height, including at the ankles and above the head |
 | `BASIC_SWING` reach | 6.5 studs |
+
+**Those zone numbers are worth internalising, because they are what makes the
+tick-rate arithmetic elsewhere bite.** A forearm capsule is 0.26 studs of
+radius. `HitDetection.md` 9.4.4 sizes the `PATH` driver against the *smallest*
+hurtbox radius in the game, and this is it — not the 1.5 the old single capsule
+had. Finer hurtboxes require a faster driver, and the failure is a hand that
+silently cannot be hit.
 
 **Y is up.** X and Z are the ground plane. This matters constantly and is the
 first thing to get backwards.
@@ -166,10 +188,17 @@ This is the line that does it, and it is the entire geometric content of a
 capsule hurtbox:
 
 ```lua
--- SpatialComponent:endpoints
-local offset = Vector3.new(0, half, 0)
-return cf * offset, cf * -offset
+-- HurtboxComponent:endpoints(index, pose)
+local world = pose * zone.offset          -- the zone, on its limb, in the world
+local axis  = Vector3.new(0, half, 0)
+return world * axis, world * -axis, zone.radius
 ```
+
+**Two multiplies, not one, and the first is the one that changed in 2026-08-22.**
+`pose * zone.offset` puts the zone on the limb it rides; `world * axis` then
+lays the capsule out along that zone's *own* Y. An upper arm points sideways,
+so its capsule points sideways — which is exactly what a position-only offset
+could not express, and why `offset` is a `CFrame` rather than a `Vector3`.
 
 Two other forms worth recognising:
 
@@ -218,24 +247,43 @@ There is no hurtbox object. Nothing is parented anywhere. It does not
 replicate, does not render, and does not have a position that could fall out of
 step with the body it belongs to.
 
-It is **a pointer and two numbers**:
+It is **a list of zones, each a name and three values**:
 
 ```lua
-spatial.anchor       -- a BasePart in the world
-spatial.radius       -- a number
-spatial.halfHeight   -- a number
+{ name = "ArmLowerL", anchor = "LeftLowerArm",
+  offset = CFrame.new(0, -0.20, 0), radius = 0.26, halfHeight = 0.50 }
 ```
 
-plus one function that turns them into a shape at the moment somebody asks:
+plus one function that turns a zone into a shape at the moment somebody asks:
 
 ```lua
-function SpatialComponent:endpoints(cf)   -- cf * (0, ±halfHeight, 0)
+function HurtboxComponent:endpoints(index, pose)   -- (pose * offset) * (0, ±halfHeight, 0)
 ```
 
 **Nothing is stored between calls.** No update step that could run late, no
-cached copy that could go stale, no second position to keep in sync. Ask where
-the hurtbox is and you get the anchor's `CFrame` transformed, computed on the
-spot.
+cached copy that could go stale, no second position to keep in sync.
+
+### 2.2a — `anchor` is a NAME, and the pose comes from outside
+
+Two properties fall out of that snippet, and both are load-bearing.
+
+**`anchor` is a string, never an `Instance`.** One definition table is shared by
+every body of a kind and must survive every respawn — and a respawned character
+is a completely new set of Instances. An `Instance` reference would bind one
+zone list to one corpse. `bind(model, root)` resolves the names per body, on
+every attach including respawn; a name that does not exist on this rig falls
+back to the root **and warns**, because the zone list is content and the rig is
+art, and the two drift.
+
+**The caller supplies the pose. The component never fetches one.** This is the
+property that makes a hurtbox rewindable at all: hand it a pose from 100ms ago
+and it produces the shape the body had 100ms ago, with nothing stored per
+moment. A component that read `part.CFrame` itself could only ever answer about
+*now* — the one tense hit detection does not care about.
+
+That is also why the hurtbox is deliberately position-*less*, and why per-limb
+history lives in `SpatialComponent` instead of here. Shape and position-over-time
+are different kinds of fact; see Part 7.
 
 ### 2.3 — The consequences of that, which are the whole reason it is built this way
 
@@ -256,11 +304,26 @@ not the same kind of thing here.
 | Belongs to | a **body** — the thing being attacked | an **attack** |
 | Exists | continuously, as long as the body does | for the duration of one swing |
 | Is | **observed state** — "where was that arm 100ms ago" is a real question | **generated data** — computed on demand from the attacker's pose |
-| Needs history | **yes**, that is what the ring buffer is for | no. It is created, used, and discarded |
-| In code | `SpatialComponent` (→ `HurtboxComponent`) | `HitVolume` on a skill definition |
+| Needs history | **yes**, that is what the ring buffer is for | **only if its motion was observed rather than computed** — see below |
+| In code | `HurtboxComponent` (shape) + `SpatialComponent` (where it was) | `HitVolume` on a skill definition |
 
 **A hurtbox is remembered. A hitbox is calculated.** That asymmetry is why one
 of them has a 47-slot ring buffer and the other is a plain table.
+
+> **The second row was corrected on 2026-08-21 and the correction is the
+> interesting part.** "Hitboxes never need history" is true for a hitbox
+> defined by a *formula* — the server can recompute where the blade is at any
+> moment on demand, so there is nothing to store. **The moment a hitbox comes
+> from an animation it becomes observed too**, and then it needs history for
+> exactly the same reason a hurtbox does. The original claim was conditional on
+> an assumption nobody had written down.
+>
+> An authored `PATH` track *is* that history — recorded once at dev time
+> instead of every frame at runtime. Same data, cheaper, and impossible for a
+> client to tamper with. `HitDetection.md` Part 9.4.
+>
+> *The test: is this volume's position computable from a formula? If yes, no
+> storage. If no, it is observed data and something must have written it down.*
 
 ### 2.5 — The overlay is a picture of a hurtbox, not a hurtbox
 
@@ -296,11 +359,11 @@ hemisphere on each end — a pill.
   \___/     ← hemisphere cap
 ```
 
-In code it is exactly the two endpoints and the radius:
+In code it is exactly the two endpoints and the radius, and one call returns all
+three so a caller has everything `Overlap` needs without reaching into the zone:
 
 ```lua
-local capA, capB = spatial:endpoints(pose)   -- the segment, in world space
-local radius     = spatial.radius
+local capA, capB, radius = hurtbox:endpoints(index, pose)   -- world space
 ```
 
 Total height is `2 * halfHeight + 2 * radius` — the straight part, plus a
@@ -404,13 +467,24 @@ the model.
 | **B — declare** `{ part = "Tail", radius = 1.1 }` | a Lua table, keyed to a part | typed numbers | **yes** | the mesh is resized and the number is not |
 | **C — author** `{ part = "HB_Tail" }` | a real part inside the rig | **a mouse, in Studio** | no | the mesh is reshaped and the hurtbox part is not |
 
-**All three end as the same thing: an anchor part, a radius, a halfHeight.**
-Whether the anchor is called `Tail` or `HB_Tail` is a string. Whether the
-radius came from `capsuleFromSize` or a typed field is one `or`.
+**All three end as the same thing: an anchor name, an offset, a radius, a
+halfHeight.** Whether the anchor is called `Tail` or `HB_Tail` is a string.
+Whether the radius was read off a part's `Size` or typed by hand is one `or` at
+the point the list is built.
 
-**There is no branch, no mode, and no cost to mixing them per hitzone on the
+**There is no branch, no mode, and no cost to mixing them per zone on the
 same model.** This is a workflow choice, not an architecture choice, and it
 never has to be made once for the whole game.
+
+> **Only route B is built.** `PLAYER_R15` is typed numbers, for a boring
+> reason: players wear Roblox's stock R15 rig, so there is no `.rbxm` of ours
+> to drop parts into and nothing to read off.
+>
+> `SpatialComponent.capsuleFromSize` existed to do route A and was **deleted on
+> 2026-08-22 with zero callers**, including in tests — it had been in the wrong
+> file since the day it was written, and nothing was ever committed to it
+> either way. Routes A and C are decisions, not code. They arrive together with
+> the first rigged model, in whatever reads a boss's parts at spawn.
 
 ### 4.3 — What each is for
 
@@ -559,50 +633,109 @@ not in the repo until you explicitly `Save to File`.
 
 ## Part 7 — `HurtboxComponent` — What It Owns, And Why It Is Its Own Thing
 
-**Status:** UNBUILT. Designed in `HitDetection.md` §7.7.
+**Status:** **BUILT 2026-08-22.** Designed in `HitDetection.md` §7.7. The
+split described here landed — but **not the way this Part originally argued
+for**, and 7.4 keeps both positions.
 
 ### 7.1 — What it is not for
 
 **It does not connect parts to models.** Nothing needs connecting — Part 6.
 The parts arrive welded because the file says they are welded.
 
+**And it does not hold a position.** That is the sharper version of the same
+point. It has no `CFrame`, no anchor `Instance`, and no history; every one of
+those belongs to `SpatialComponent`. What it holds is shape.
+
 ### 7.2 — What it actually owns
 
 | Owns | Why |
 |---|---|
-| **the hitzone list** | N entries of `(partId, anchor, radius, halfHeight, shape)` instead of `SpatialComponent`'s single set |
-| **per-limb history** | rewind must answer *"where was the claw 100ms ago"*, and limbs move independently — see Part 8 |
-| **a cached bounding radius** | so broadphase stays **one** cheap sphere test per entity and only survivors pay for all six capsules |
+| **the zone list** | N entries of `(name, anchor, offset, radius, halfHeight)`, copied and `table.freeze`d at construction |
+| **the resolved anchors** | `bind(model, root)` turns each zone's part *name* into an actual `BasePart` on *this* body, re-run on every respawn |
+| **a measured bounding radius** | so broadphase stays **one** cheap sphere test per entity and only survivors pay for all ten capsules |
+
+**It does *not* own per-limb history**, which is what this Part originally said
+it would. See 7.4.
+
+**The bounding radius is measured in `bind`, not derived from the list**, and
+that is a bug fix rather than a design flourish. A zone's offset is relative to
+*its limb*, so summing `offset + halfHeight + radius` answers *"how far does
+this capsule reach from its own arm"* — 1.45 studs for a player, against a real
+reach from the root of ~3.3. The broadphase culls **from the root**. It is now
+measured where the limbs actually exist, as (limb from root) + (zone from limb),
+padded 2× because that is a rest-pose reading and limbs move.
+
+*Wrong-high costs a few extra exact tests. Wrong-low silently drops real hits
+before the exact test ever runs* — which is why the pad is deliberately
+generous and why the fix is worth a paragraph.
 
 ### 7.3 — Why it is separate from `SpatialComponent`
 
-**Honestly: it does not have to be.** `SpatialComponent` could grow a list and
-the game would work. Two arguments for splitting, in order of strength.
+**Honestly: it does not have to be.** `SpatialComponent` could hold both, and
+the game would work. The argument that survives is not about mechanism:
 
-**The practical one.** Growing `SpatialComponent` means rewriting `record`,
-`poseAt`, `getCFrame` and `endpoints` to be list-shaped, and changing every
-existing caller with them. Leave it as *"where one thing is, and where it
-was"* — which is built and tested — and let `HurtboxComponent` hold N of them.
+**Plenty of things need a position without a hurtbox** — ground markers, spawn
+points, AI waypoints, a projectile's origin. Almost nothing needs a hurtbox
+without a position. **Position is the general fact; shape is a specialisation
+hung off it.**
 
-**The tidiness one.** Plenty of things need a position without a hurtbox:
-ground markers, spawn points, AI waypoints, a projectile's origin. Almost
-nothing needs a hurtbox without position. **Position is the general fact; the
-hurtbox is a specialisation bolted onto it**, and `Architecture-Reference.md`
-Part 3 wants a Component's truth checkable by looking at itself alone.
+The sharper test, and the one to actually use:
 
-| Component | Owns |
-|---|---|
-| `SpatialComponent` | anchor, pose ring buffer, `poseAt` |
-| `HurtboxComponent` | the hitzone list, and the bounding radius derived from it |
+> **Does it change while the game runs?** Shape does not — it is written once
+> at attach and frozen. Position does — thirty times a second, forever.
 
-**Split when the list lands, not as a later cleanup** — otherwise the anatomy
-arrives in `Spatial` by inertia and nobody pays to move it.
+| Component | Owns | Written |
+|---|---|---|
+| `SpatialComponent` | anchor, tracked parts, one pose ring buffer per part | 30Hz, forever |
+| `HurtboxComponent` | the zone list, and the bounding radius measured from it | once, at attach |
+
+### 7.4 — The half of this Part that was wrong
+
+**This Part originally claimed per-limb history belonged in `HurtboxComponent`,
+on a "practical" argument. It was built the other way on 2026-08-22, and the
+original argument is kept because it sounded right.**
+
+> *"Growing `SpatialComponent` means rewriting `record`, `poseAt`, `getCFrame`
+> and `endpoints` to be list-shaped, and changing every existing caller with
+> them. Leave it as 'where one thing is, and where it was' — which is built and
+> tested — and let `HurtboxComponent` hold N of them."*
+
+**What beat it: compare the bookkeeping.** The `PetRoster` → `Equipment`
+precedent in `Architecture-Reference.md` Part 7. A per-limb ring buffer needs a
+preallocated array that never grows, ordered samples, interpolated lookup by
+timestamp, and clearing on rebind — **which is `SpatialComponent` exactly, with
+an explicit key instead of an implicit one.** A child component would have had
+to duplicate every one of those invariants, and each duplicate is a place they
+can disagree.
+
+It also gets the lifecycle for free rather than by wiring: one `clearHistory`
+clears every ring, one `setAnchor` rebuilds them all, and there is no teardown
+to keep in sync because there is one owner.
+
+**And the cost the original argument was avoiding turned out to be small** —
+`record` gained an optional part parameter and `poseAt` gained a lookup. The
+anchor's own poses stayed a plain field rather than becoming a map entry,
+which is what kept every existing caller and every existing test working
+unchanged.
+
+*The test that catches the original position: does the new thing need
+invariants the existing component already enforces? If yes, key into it. A
+second component is warranted by different bookkeeping, not by a tidier noun.*
+
+**One structural detail worth keeping**, because it is the kind of thing that
+looks like an inconsistency later: every tracked part shares **one `times`
+array and one `cursor`**. They are all sampled on the same tick at the same
+instant, so per-part copies would be eleven sets of identical numbers plus
+eleven counters that must never diverge — a class of bug that cannot exist when
+there is one.
 
 ---
 
-## Part 8 — History And Rewind — The Part That Is Blocked On A Test
+## Part 8 — History And Rewind — The Part That Was Blocked On A Test
 
-**Status:** OPEN. This is the one genuine unknown in the whole design.
+**Status:** **CLOSED 2026-08-21, and built 2026-08-22.** This was the one
+genuine unknown in the design. It was measured rather than argued, and the
+measurement is kept below because the *number* still matters everywhere else.
 
 ### 8.1 — Why history exists at all
 
@@ -620,30 +753,62 @@ One ring buffer on the root can answer *"where was this body"*. It cannot
 answer *"where was this claw"*, because limbs move independently — that is what
 animation is.
 
-Cost, if it is needed: five hitzones × 47 samples ≈ **21KB per boss**, and
-sampling goes from one `CFrame` read per tick to five.
+**Built 2026-08-22.** `SpatialComponent` keys a pose array by `BasePart`; a
+player's ten zones resolve to ten limbs, each rewound through its own. Measured
+cost: ten zones × 47 samples ≈ **30KB per body**, about half a megabyte for
+twenty bodies, and sampling goes from one `CFrame` read per tick to ten.
 
-### 8.3 — The test that decides it
+### 8.3 — ~~The test that decides it~~ — CLOSED 2026-08-21
 
-**Does the server see animated limb positions at all?**
+**The question was: does the server see animated limb positions at all?**
+`Motor6D.Transform` is written by the Animator every frame and is **not**
+replicated. The working assumption was that parts replicate even though joint
+transforms do not — but published sources conflicted, and it had never been
+checked here. This Part used to end with *"run this before building
+`HurtboxComponent`."*
 
-`Motor6D.Transform` is written by the Animator every frame and **is not
-replicated**. The working assumption is that parts replicate even though joint
-transforms do not, so the peer running the Animator has live part CFrames.
-Published sources conflict and this has never been checked here.
+**It was run. `diagnostics/LimbProbe.luau`, three revisions, now retired.**
 
-**How to run it, and it does not need the asset group:** give a dummy a
-`Humanoid` and let it walk. An NPC's `Animate` script runs on the *server*, so
-it is already playing animations server-side. Print a hand part's `CFrame`
-every 0.2s from a server Script and watch whether the numbers move.
-
-| Result | What `HurtboxComponent` becomes |
+| | |
 |---|---|
-| limb CFrames **move** | the full design — list + a ring buffer per hitzone |
-| limb CFrames are **frozen** | much smaller — list + fixed offsets from the root, no per-limb buffers. Anatomy still resolves correctly at rest; limbs just do not swing independently |
+| Does the server see a client-animated limb move? | **Yes**, unambiguously |
+| Does a welded proxy ride it exactly? | **Yes** — proxy and limb reported identical figures |
+| Is the joint a `Motor6D`? | **No — `AnimationConstraint`.** The Avatar Joint Upgrade is live on this place, so `IsA("Motor6D")` fails and writing `C0`/`C1` errors |
+| How far behind is the server's live view? | **≈0.104s** — best-match offsets of −0.150, −0.050, −0.170, −0.045 |
 
-**Run this before building `HurtboxComponent`.** It changes how much component
-there is to build.
+**That last number is the finding, and it is a reassurance rather than a
+problem.** `INTERPOLATION_CONSTANT` is 0.100s. The server's live view of a limb
+trails by almost exactly the interval the rewind arithmetic already says
+client-visible state trails by — **the design working, not failing**, and
+precisely what rewind exists to undo.
+
+So the "limb CFrames are frozen" branch of the old decision table never
+happened, and the full design was built.
+
+> **What the probe could NOT answer, named so it is not assumed:** its control
+> rig had its joint written **directly by a script**, not by an `Animator`. A
+> scripted `Transform` write does not replicate in either direction, so the
+> client saw that control as completely static — correct behaviour, and it
+> means **a server-animated boss remains unmeasured.** One real uploaded
+> animation settles it.
+
+### 8.4 — What the measurement did *not* decide
+
+Worth stating, because it is easy to read 0.104s as an argument for something.
+
+**It did not choose the hitbox model.** `PATH` anchors to the root and never
+reads a limb, so there is no staleness for it to inherit — the probe's value
+was removing an unknown, not picking a design. `HitDetection.md` 9.6.
+
+**And it did not justify anchoring player zones to the root.** That was tried,
+on exactly this number: 0.104s × 45 studs/sec of swing speed is 4.68 studs of
+error. Real arithmetic, wrong case to design around — a body spends nearly all
+its time walking, where the same formula gives **0.30 studs against an arm
+capsule whose radius is 0.28.** The error was smaller than the capsule's own
+thickness, and the cost was a rigid mannequin riding the player.
+
+*The test that caught it: draw it and look.* It survived an hour of argument
+and died the instant it was rendered.
 
 ---
 
@@ -652,11 +817,26 @@ there is to build.
 **Status:** SETTLED. Each kept with the test that catches it, per
 `Architecture-Reference.md`'s pattern.
 
-**One enveloping sphere per body.** What ships today, and a placeholder rather
-than a stage. A sphere large enough to cover a boss covers **the space between
-its limbs** — under a raised arm, between the legs, past the side of the head.
-Already wrong for players: 2.5 radius on a 2-stud-wide body.
+**One enveloping sphere per body.** Shipped until 2026-08-22, as a placeholder
+rather than a stage, and now **deleted**. A sphere large enough to cover a boss
+covers **the space between its limbs** — under a raised arm, between the legs,
+past the side of the head. It was already wrong for players: 2.5 radius on a
+2-stud-wide body.
 *Test that catches it: turn on the overlay and look at any body that is not a ball.*
+
+**Every zone offset from the body's ROOT rather than from its own limb.**
+Adopted, built, drawn, and reversed inside one day (2026-08-22). It produces a
+rigid arrangement of capsules that ignores the pose entirely — a mannequin
+riding the player, arms fixed at its sides no matter what the body does. The
+reasoning was sound arithmetic applied to the wrong case: see 8.4.
+*Test that catches it: draw it and look. It survived an hour of argument and died the instant it was rendered.*
+
+**One capsule per arm, anchored at the shoulder and stretched over the
+forearm.** The tempting middle ground once zones ride limbs — half the count,
+still "follows the animation." Fine while the arm is straight and wrong the
+moment an elbow bends, which is most of what an arm does. It keeps the mannequin
+problem in a smaller costume.
+*Test that catches it: bend the elbow.* Splitting at the joints is the point, which is why the player list is ten zones and not six.
 
 **A list of spheres with offsets in a Lua table.** Right about the count, wrong
 twice over — a sphere fits a limb badly in the long direction, and the offsets
@@ -688,25 +868,33 @@ does not want a cleverer capsule; it wants three (3.6).
 
 ## Part 10 — Current State
 
-**Status:** as of 2026-08-20.
+**Status:** as of **2026-08-23**.
 
 | Piece | State |
 |---|---|
-| `SpatialComponent` — anchor, radius, halfHeight, ring buffer | **BUILT** |
-| `SpatialComponent:endpoints` — the capsule | **BUILT** |
-| `SpatialComponent.capsuleFromSize` — the derivation | **BUILT**, and has **zero callers**, including in tests |
-| One capsule per entity | **BUILT** — a placeholder, and already too fat on a player |
-| `HurtboxComponent`, the hitzone list | **UNBUILT** |
-| Per-limb history | **UNBUILT**, and blocked on Part 8's test |
-| `shape` overrides — `BOX`, `SPHERE` | **UNBUILT** |
+| `HurtboxComponent`, the zone list | **BUILT 2026-08-22** |
+| `HurtboxDefinitions` — `PLAYER_R15` (ten zones), `DUMMY` (one) | **BUILT**, and validated at boot |
+| `HurtboxComponent:endpoints(index, pose)` — the capsule | **BUILT** |
+| `bind` — resolving anchor names per body, re-run on respawn | **BUILT**, falls back to the root and warns |
+| Per-limb history | **BUILT** — `SpatialComponent` keys pose arrays by `BasePart`, one shared timeline |
+| Resolution testing the zone list | **BUILT** — each zone rewound through its own limb |
+| `boundingRadius`, measured from the root in `bind` | **BUILT**, padded 2× for rest pose |
+| ~~`SpatialComponent` — radius, halfHeight, `endpoints`, `capsuleFromSize`~~ | **DELETED 2026-08-22.** `capsuleFromSize` had zero callers from the day it was written, and was in the wrong file besides |
+| ~~One capsule per entity~~ | **DELETED.** No hurtbox now means not hittable, asserted at attach |
+| `DebugHurtboxes` overlay | **BUILT**, welded to each zone's own limb, on by default |
+| Reading zones off a rig's own parts (the boss route) | **UNBUILT** — Part 4 route C |
+| `shape` overrides — `BOX`, `SPHERE` | **UNBUILT.** `SPHERE` is free as `halfHeight = 0` and is already used for the head |
 | `partId` on `AttackContext` | **UNBUILT** |
-| `DebugHurtboxes` overlay | **BUILT**, welded, on by default |
 | Any hand-authored `HB_` part | **none yet** — no rigged model exists |
 
-**The thing worth noticing about this table:** the shape decisions are settled
-and almost none of them are built. That is deliberate, and it is why a
-challenge to the design costs nothing right now and would cost a migration
-later.
+**What this table looked like on 2026-08-20 is worth remembering:** every shape
+decision settled, and almost nothing built. That was deliberate — a challenge to
+the design cost nothing then and would have cost a migration later. One of those
+decisions (root-anchored zones) did get challenged, on the day it was
+implemented, and reversing it cost an afternoon instead of a rewrite.
 
-**Next physical step:** run Part 8's test. It is five minutes, needs no
-uploaded assets, and decides the size of the next component.
+**Next physical step:** the boss route. Players are typed here because they wear
+a stock R15 rig with no `.rbxm` of ours to drop parts into; a boss is our own
+model, so its zones get placed by eye in Studio and read off the rig at spawn.
+That is the better workflow and the one to reach for whenever it is available —
+Part 4.3, and it needs the first rigged model to exist.

@@ -335,8 +335,24 @@ Service, registry, or other entity.
 | Holds | Invariant |
 |---|---|
 | `anchor` — the entity's `BasePart` | reports unanchored rather than erroring when the instance is gone |
-| `radius`, `halfHeight` — the capsule | positive radius, set at attach. One capsule; the list moves to `HurtboxComponent` |
-| `_times` / `_poses` — parallel ring buffers | fixed length, allocated once, **never grows** |
+| the parts it tracks — the anchor, plus every limb a zone rides | resolved at attach; re-anchoring clears every buffer |
+| `times` / `poses` + one pose array per tracked part | fixed length, allocated once, **never grows**. **One shared timeline and cursor** across every part |
+
+**Shape is not here.** `HurtboxComponent` owns the zone list; this owns where
+those zones' limbs were, and when. *The test that separates them: does it change
+while the game runs?* Shape does not. Position does.
+
+**One timeline, many pose arrays**, because every tracked part is sampled on the
+same tick at the same instant. Per-part timestamps and cursors would be eleven
+sets of identical numbers plus eleven counters that must never diverge — a class
+of bug that cannot exist when there is one.
+
+**The anchor's poses stay a plain field** rather than an entry in the part-keyed
+map, for two reasons: it is genuinely privileged (it is what the broadphase
+culls against and what an attack's origin is built from), and it has to exist
+*before* there is an anchor to key it by — an entity is constructed on join and
+its body arrives later. Tests rely on the same property, recording into a bare
+component with no Instance anywhere.
 
 **The buffer is preallocated and never reallocates.** Not premature
 optimization: this is written by a 30Hz tick for every entity in the world,
@@ -353,13 +369,23 @@ Stores nothing. Owns three rules: when to sample, how far to rewind, who is
 attached.
 
 ```
-attach(entity, anchor, radius, halfHeight)
+attach(entity, anchor, zones)         zones REQUIRED -- see below
 detach(entity)
-tick(dt)                              samples every attached entity, 30Hz
+tick(dt)                              samples every tracked part, 30Hz
 poseAt(entity, t) -> CFrame?          the rewind query
 candidatesNear(position, radius, margin)   broadphase
 viewTimeFor(player) -> number         the rewound moment
 ```
+
+**`zones` is required and asserted, not defaulted.** A body attached without a
+zone list is simply not hittable, and the assert is what stops that being a
+silent outcome. The alternative — falling back to some default capsule — is how
+a boss ships with a placeholder shape nobody notices for a month.
+
+**Order matters inside `attach`:** `setAnchor` clears history, so the tracked
+limbs are collected and registered *after* it. Reversed, every limb buffer is
+wiped immediately after being created, and the only symptom is that rewound
+zone lookups quietly return nothing.
 
 **Explicit registration gives a second thing for free: the set of attached
 entities *is* the candidate set.** There is no entity registry in this
@@ -487,9 +513,11 @@ player costs nothing.**
 
 ## Part 7 — Hurtboxes — The Decisions
 
-**Status:** DESIGNED. One capsule per entity is **BUILT** and is a placeholder.
-Authoring procedure lives in `Hurtboxes.md`; this Part keeps only the decisions
-and what they rejected.
+**Status:** **BUILT 2026-08-22** for the typed route — ten limb-anchored zones
+per player, one per dummy, each rewound through its own limb. The single
+enveloping capsule is deleted. Reading zones off a rig's own parts (the boss
+route, 7.3) is still **UNBUILT**. Authoring procedure lives in `Hurtboxes.md`;
+this Part keeps only the decisions and what they rejected.
 
 **A hurtbox is a list of capsules roughly mirroring the model's parts.** Six or
 so for a humanoid; more for a boss with anatomy worth distinguishing.
@@ -500,9 +528,11 @@ A single sphere or box around a large enemy makes the space **between** its
 limbs hittable. Fire under a raised arm and it registers. The player's current
 radius is already ~2.5× too wide horizontally.
 
-This is the currently built behaviour, and it is a placeholder rather than a
-design. **It is already wrong at today's numbers** — the ten dummies are enough
-to see it, and it does not need a boss to justify fixing.
+This was the built behaviour until 2026-08-22 and it was a placeholder rather
+than a design. **It was already wrong at the numbers of the day** — the ten
+dummies were enough to see it, and it never needed a boss to justify fixing.
+**Closed:** the single capsule is deleted and a body with no zone list is
+simply not hittable, asserted at attach rather than silently falling back.
 
 ### 7.2 — The one fact that decides the shape
 
@@ -705,8 +735,16 @@ invisible.
 
 ### 7.5 — A hurtbox is not an Instance, and never lags
 
-A hurtbox is `anchor` + `radius` + `halfHeight`, evaluated on demand by
-`endpoints(cf)`. **Nothing is stored between calls, so nothing can desync.**
+A hurtbox is a list of zones, each an `offset` + `radius` + `halfHeight` hung
+off a named limb, evaluated on demand by `endpoints(index, pose)`. **Nothing is
+stored between calls, so nothing can desync.**
+
+**The caller supplies the pose; the component never reads one.** That is not
+ceremony — it is the single property that makes a hurtbox rewindable. Hand it
+a pose from 100ms ago and it produces the shape the body had 100ms ago, for
+free, with nothing stored per moment. A component that read `part.CFrame`
+itself could only ever answer about *now*, which is the one tense this layer
+does not care about.
 
 The debug overlay is a separate thing that *draws* one, and an earlier version
 of it trailed the player by a full round trip because it was anchored parts
@@ -1482,7 +1520,9 @@ arrives nobody re-derives it from scratch.
 
 | Module | Owns | Tree | Status |
 |---|---|---|---|
-| `components/SpatialComponent.luau` | anchor, capsule, position ring buffer | `serverShared` | **BUILT** |
+| `components/SpatialComponent.luau` | anchor, tracked parts, one position ring buffer per part | `serverShared` | **BUILT** |
+| `components/HurtboxComponent.luau` | the zone list — shape only, no position, no history | `serverShared` | **BUILT** |
+| `definitions/HurtboxDefinitions.luau` | zone lists as content. `PLAYER_R15` (ten zones), `DUMMY` (one) | `serverShared` | **BUILT** |
 | `services/authority/SpatialService.luau` | sampling, rewind, attachment registry | place `server/` | **BUILT** |
 | `resolution/targeting/HitVolume.luau` | shape vocabulary, defaults, validation, step-count derivation | place `server/` | **BUILT** |
 | `resolution/targeting/Overlap.luau` | the four volume-vs-capsule tests. Pure math, no requires | place `server/` | **BUILT** |
@@ -1516,14 +1556,31 @@ is not duplicated here; this is the shape of it.
 | Overlap math, four shapes vs capsule targets | **BUILT** |
 | `TargetResolution`, five stages | **BUILT** |
 | `SWEEP` + wedges + the stopwatch driver | **BUILT**, player direction verified |
-| One capsule per entity | **STILL WHAT RESOLUTION TESTS.** The placeholder, now drawn beside its replacement |
-| `HurtboxComponent` + `HurtboxDefinitions` | **BUILT 2026-08-22.** Ten limb-anchored zones for a player, one for a dummy. Drawn by `HurtboxDebug`; **not yet tested against** |
-| Per-zone history | **UNBUILT, and it is what blocks resolution using zones** — 7.2a |
+| `HurtboxComponent` + `HurtboxDefinitions` | **BUILT 2026-08-22.** Ten limb-anchored zones for a player, one for a dummy. Drawn, looked at, and confirmed to follow the pose |
+| Per-zone history | **BUILT 2026-08-22.** `SpatialComponent` keys rings by `BasePart` — one shared timeline and cursor, one pose array per part — 7.2a |
+| Resolution testing the zone list | **BUILT 2026-08-22.** Each zone rewound through its own limb; returns on the first zone that connects, because dedup would discard the rest anyway |
+| One capsule per entity | **DELETED 2026-08-22**, along with `capsuleFromSize`. No hurtbox now means not hittable, asserted at attach |
 | Reading zones off a rig's parts (bosses) | **UNBUILT.** Players are typed; bosses want the authored route — 7.3 |
 | `motion` as a field | **UNBUILT.** Currently implied by `sweep` |
 | `PATH`, `PROJECTILE`, `LIVE` | **UNBUILT.** Ownership decides which — 9.0a |
 | Beats | **UNBUILT**, and blocked on the Score existing |
 | Enemy attacks | **never run.** No enemy has attacked |
+
+**Two bugs the live run caught and nothing else would have**, both silent, both
+worth keeping because the shape recurs:
+
+**`boundingRadius` measured from the wrong origin.** A zone's offset is relative
+to ITS LIMB, so summing offset + halfHeight + radius answered *"how far does
+this capsule reach from its own arm"* — 1.45 studs for a player, when the real
+reach from the root is ~3.3. **The broadphase culls from the root.** It never
+surfaced because the volume's own reach (7.5) dominated the sum, so nothing near
+the edge of range had been tested. Now measured in `bind` as (limb from root) +
+(zone from limb), padded 2× because that is a rest-pose reading and limbs move.
+**Wrong-low silently drops real hits before the exact test ever runs.**
+
+**`idsOf` was a local declared after its first use**, so the instantaneous AOE
+path threw `attempt to call a nil value` the first time anyone pressed the key.
+Pre-existing, on a path nothing had exercised.
 
 ---
 
@@ -1533,7 +1590,8 @@ Each named so it is not mistaken for an oversight.
 
 | Gap | Why acceptable now | Trigger to fix |
 |---|---|---|
-| **One enveloping hurtbox per entity** | **This is a bug, not a gap.** The space between a large enemy's limbs is hittable, and the player capsule is ~2.5× too wide horizontally | Available now. The ten dummies are enough — do not wait for a boss |
+| ~~**One enveloping hurtbox per entity**~~ | **CLOSED 2026-08-22.** Ten limb-anchored zones per player, per-zone history, resolution testing them, the single capsule deleted | — |
+| **A zone displacement bound is claimed nowhere and enforced nowhere** | A client owns its own limbs, so it can move its own zones. What that wins is a slightly displaced arm capsule on the *defensive* side, where "defense is generous" already errs their way. 7.4 calls this "a bound, not a ban" — **no bound is implemented** | A body whose zones reach far enough from the root that displacing one meaningfully changes what can hit it. An arm capsule of radius 0.28 is not that |
 | **`SWEEP` rotates about Y only** | Every attack so far is a horizontal fan | The first diagonal or overhead slash. Either a `sweepAxis` field, or `PATH` makes it moot |
 | **One window per activation** | No attack has needed two | The first X or multi-beat attack. `_sweeps` must hold several per activation |
 | **No start delay** | Every window opens on arrival | The first delayed attack. A beat is the field |

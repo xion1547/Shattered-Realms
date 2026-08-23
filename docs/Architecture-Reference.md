@@ -1541,7 +1541,22 @@ Conceptual name here, suffixed name on disk.
 | `Equipment` | named slots → ItemEntity | slot names must match declared slots; one item per slot |
 | `Inventory` | ordered item slots, capacity | enforces maxSlots; handles stack merging; stable slot indices |
 | `Resources` | resourceId → current value | values are numbers; get() returns 0 for unknown resourceIds |
-| `Spatial` | world anchor, hurtbox radius, position ring buffer | buffer is preallocated and never grows; re-anchoring clears history — see `HitDetection.md` |
+| `Spatial` | world anchor, the parts it tracks, and one position ring buffer per part | buffers are preallocated and never grow; one shared timeline and cursor across every tracked part; re-anchoring clears history — see `HitDetection.md` |
+| `Hurtbox` | the zone list — N capsules, each an offset from a named limb | shape only, frozen at construction; holds no position and no history, which is what makes it rewindable |
+
+**`Spatial` and `Hurtbox` are the pair most often confused**, and the test that
+separates them is one question: **does it change while the game runs?**
+`Hurtbox` holds shape, written once at attach; `Spatial` holds position over
+time, written thirty times a second forever. That is also why
+`endpoints(index, pose)` takes the pose as a parameter instead of reading it —
+a component that read `part.CFrame` itself could only ever answer about *now*,
+and this layer's whole job is answering about a moment that has passed.
+
+Per-limb history lives *inside* `Spatial`, keyed by `BasePart`, rather than in
+a child component. Same reasoning as `PetRoster` → `Equipment` below: compare
+the bookkeeping. A per-limb ring needs a preallocated buffer that never grows,
+ordered samples, interpolated lookup by timestamp, and clearing on rebind —
+which is `Spatial` exactly, with an explicit key instead of an implicit one.
 
 **`Vitals` is gone and was never built.** Earlier revisions of this table
 listed `Vitals | hp, maxHp, isDead`. Part 8 resolved that HP is a resource

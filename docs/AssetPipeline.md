@@ -567,5 +567,11 @@ of delegating permissions later. It applies to meshes and animations
 identically, and it must hold from the very first upload: a personal-account
 asset does not transfer to a group, it gets re-uploaded.
 
-**The group does not exist yet.** Creating it is the first physical step of
-this pipeline, before any Blender export or animation publish.
+**The group EXISTS as of 2026-08-22, and the experience has been transferred to
+it.** That was the only irreversible step in this entire pipeline, and it is
+done. Nothing here is blocked any more.
+
+**Every upload from here goes under the group. Nothing personal, ever** — for
+meshes exactly as much as for animations. The cost of getting this wrong is not
+a setting to change later; it is re-uploading every asset in the game and
+re-recording every id that referenced one.
