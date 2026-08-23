@@ -53,11 +53,14 @@ local AttackDebug = require(diagnostics:WaitForChild("AttackDebug"))
 local SwingReport = require(diagnostics:WaitForChild("SwingReport"))
 local DebugConfig = require(diagnostics:WaitForChild("DebugConfig"))
 
--- The verbose per-swing breakdown lived here and is gone: it did its job on
--- 2026-08-15 and the numbers are recorded in Implementation-Status.md.
--- `diagnostics/SwingReport.luau` is still on disk -- require it and call
--- SwingReport.report(player, event, query, hits) to bring it back for an
--- afternoon. A domain service should not carry one permanently.
+-- BOTH ARE WIRED AND BOTH ARE GATED. AttackLog says WHAT an attack caught;
+-- SwingReport says WHY -- latency, rewind, what the cull kept, and every
+-- surviving candidate with the numbers it was judged on, misses included.
+-- "Why did that one miss" is the only question anyone actually asks, and a hit
+-- total cannot answer it.
+--
+-- SwingReport defaults OFF: one block per swing is indispensable for one swing
+-- and unreadable for ten.
 
 local eventTypes = game:GetService("ReplicatedStorage"):WaitForChild("eventTape")
     :WaitForChild("event"):WaitForChild("types")
@@ -618,6 +621,25 @@ function CombatService:tick(_dt: number)
 end
 
 function CombatService:_finishSweep(sweep)
+    -- ONCE PER SWING, not once per wedge. Eight blocks for one attack would
+    -- bury the finding in its own output; the last wedge's query is the one
+    -- that resolved most recently and is representative of the geometry.
+    --
+    -- Rebuilt rather than stored: the query object is per-wedge and short
+    -- lived, and keeping one alive on the sweep just to print it later would
+    -- be state held for a diagnostic.
+    if DebugConfig.get("SwingReport") and sweep.lastAt then
+        SwingReport.report(sweep.player, {
+            getEventId = function() return "sweep#" .. sweep.id end,
+            getSubType = function() return sweep.subType end,
+        }, TargetQuery.new({
+            attacker = sweep.attacker,
+            volume = sweep.instant,
+            at = sweep.lastAt,
+            preferredId = sweep.preferredId,
+        }), sweep.order)
+    end
+
 
     -- TEMPORARY, and where the loop over `sweep.order` into resolveAttack goes
     -- when RESOLVE lands. Announced at the END of the swing rather than per

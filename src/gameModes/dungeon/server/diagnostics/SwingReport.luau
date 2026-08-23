@@ -110,8 +110,22 @@ end
 -- Per-candidate block: where it was, where it WAS, and the numbers the test
 -- compared. Written so a wrong answer can be recomputed by hand from the
 -- line itself.
+-- WHY DID THIS ONE NOT GET HIT. The only question anyone actually asks, and
+-- the reason this file exists -- a hit total says nothing about the four that
+-- missed.
+--
+-- REPORTS THE NEAREST ZONE, not the first. A body is a list of capsules now,
+-- and the interesting one is whichever came closest to connecting: printing
+-- zone 1 every time would hide the outstretched arm that nearly reached.
+-- The zone name is printed with it, so "ArmLowerR was 0.3 studs short" is a
+-- sentence rather than a number.
+--
+-- EVERY ZONE IS REWOUND THROUGH ITS OWN LIMB, exactly as resolution does. A
+-- report that read the root instead would disagree with the thing it is
+-- reporting on, which is worse than not reporting.
 local function reportCandidate(entity, origin: CFrame, volume, at: number, now: number, wasHit: boolean)
     local spatial = entity.spatial
+    local hurtbox = entity.hurtbox
     local id = tostring(entity.identity:getId())
     local mark = wasHit and "HIT " or "miss"
 
@@ -128,48 +142,74 @@ local function reportCandidate(entity, origin: CFrame, volume, at: number, now: 
     local wanted = math.max(0, now - at)
     local clamping = oldest < wanted
 
-    -- The hurtbox as the narrow phase saw it. A body is a LIST of capsules
-    -- now, so this reports the list rather than pretending there is one --
-    -- printing only the first zone would quietly hide the nine that decided
-    -- the miss.
-    local hurtbox = entity.hurtbox
+    print(string.format("    %s %-10s live %s  rewound %s  drift %.2f%s",
+        mark, id, vec(live and live.Position), vec(rewound.Position), drift,
+        clamping and "  <- BUFFER CLAMPING, the rewind reached past history" or ""))
 
-    print(string.format("    %s %-10s live %s  rewound %s  drift %.2f",
-        mark, id, vec(live and live.Position), vec(rewound.Position), drift))
+    if not hurtbox then
+        print(string.format("         %-10s NO HURTBOX -- not hittable at all", ""))
+        return
+    end
 
-    print(string.format("         %-10s hurtbox %d zone(s), reach %.2f",
-        "", hurtbox and hurtbox:zoneCount() or 0,
-        hurtbox and hurtbox:boundingRadius() or 0))
-
-    -- Volume-relative geometry. The offset is applied first, exactly as
-    -- Overlap.test does -- reporting against the un-offset anchor would make
-    -- a correct cleave look broken.
+    -- The offset is applied first, exactly as Overlap.test does. Reporting
+    -- against the un-offset anchor would make a correct cleave look broken.
     local volumeOrigin = volume.offset and (origin * volume.offset) or origin
     local apex = volumeOrigin.Position
-    local nearest = closestOnSegment(capA, capB, apex)
-    local distance = (nearest - apex).Magnitude
+
+    local best, bestZone, bestRadius, bestNearest = math.huge, nil, 0, nil
+    local missing = 0
+
+    for zone = 1, hurtbox:zoneCount() do
+        local pose = spatial:poseAt(at, hurtbox:anchorFor(zone))
+        if pose then
+            local capA, capB, radius = hurtbox:endpoints(zone, pose)
+            local nearest = closestOnSegment(capA, capB, apex)
+            local distance = (nearest - apex).Magnitude - radius
+            if distance < best then
+                best, bestZone, bestRadius, bestNearest = distance, zone, radius, nearest
+            end
+        else
+            missing += 1
+        end
+    end
+
+    if missing > 0 then
+        print(string.format(
+            "         %-10s %d of %d zones had no sample at that moment -- limb tracked this frame?",
+            "", missing, hurtbox:zoneCount()))
+    end
+
+    if not bestZone then
+        return
+    end
+
+    local label = hurtbox:zoneName(bestZone)
+    local surface = (bestNearest - apex).Magnitude
+
+    print(string.format(
+        "         %-10s %d zones, nearest %s at %.2f studs (surface gap %.2f)",
+        "", hurtbox:zoneCount(), label, surface, best))
 
     if volume.shape == HitVolume.Shape.ARC then
-        local reach = volume.radius + radius
+        local reach = volume.radius + bestRadius
         local limit = volume.angle * 0.5
 
-        if distance <= radius then
+        if surface <= bestRadius then
             print(string.format(
-                "         %-10s distance %.2f (reach %.2f)  attacker is INSIDE the body -- facing ignored",
-                "", distance, reach))
+                "         %-10s attacker is INSIDE %s -- facing ignored", "", label))
         else
-            local toNearest = (nearest - apex) / distance
+            local toNearest = (bestNearest - apex) / surface
             local angle = math.deg(math.acos(math.clamp(toNearest:Dot(volumeOrigin.LookVector), -1, 1)))
-            local halfWidth = math.deg(math.asin(math.clamp(radius / distance, -1, 1)))
+            local halfWidth = math.deg(math.asin(math.clamp(bestRadius / surface, -1, 1)))
             local effective = angle - halfWidth
 
-            -- NAMES WHICH TEST FAILED, because the two numbers are printed
-            -- side by side and it is genuinely ambiguous otherwise: a target
-            -- can be well inside the angle and simply too far away, which
-            -- reads as an angle pass right next to a miss.
+            -- NAMES WHICH TEST FAILED, because the two numbers sit side by
+            -- side and it is genuinely ambiguous otherwise: a target can be
+            -- well inside the angle and simply too far away, which reads as an
+            -- angle pass right next to a miss.
             local why = ""
             if not wasHit then
-                if distance > reach then
+                if surface > reach then
                     why = "  <- OUT OF RANGE"
                 elseif effective > limit then
                     why = "  <- OUT OF ANGLE"
@@ -177,67 +217,18 @@ local function reportCandidate(entity, origin: CFrame, volume, at: number, now: 
             end
 
             print(string.format(
-                "         %-10s distance %.2f (reach %.2f)  angle %.1f -> %.1f after width (limit %.1f)%s",
-                "", distance, reach, angle, effective, limit, why))
+                "         %-10s angle %.1f -> %.1f after width (limit %.1f)%s",
+                "", angle, effective, limit, why))
         end
-
-    elseif volume.shape == HitVolume.Shape.BOX then
-        -- DISTANCE FROM THE ORIGIN IS THE WRONG NUMBER FOR A BOX, and an
-        -- earlier version of this report printed it anyway -- which is why a
-        -- hit at "distance 8.64" sat next to a miss at "14.63" and explained
-        -- nothing. A box has no radius; what matters is how far the hurtbox
-        -- sits OUTSIDE the box's faces.
-        local half = volume.size * 0.5
-        local localA = volumeOrigin:PointToObjectSpace(capA)
-        local localB = volumeOrigin:PointToObjectSpace(capB)
-        local nearestLocal = closestOnSegment(localA, localB, Vector3.zero)
-        local clamped = Vector3.new(
-            math.clamp(nearestLocal.X, -half.X, half.X),
-            math.clamp(nearestLocal.Y, -half.Y, half.Y),
-            math.clamp(nearestLocal.Z, -half.Z, half.Z))
-        local gap = (nearestLocal - clamped).Magnitude
-
+    elseif not wasHit then
+        -- BOX and CAPSULE have no single angle to report, so the surface gap
+        -- IS the finding: a small positive number means it very nearly landed.
         print(string.format(
-            "         %-10s box-local %s  half-extents %s  gap %.2f (radius %.2f)%s",
-            "", vec(nearestLocal), vec(half), gap, radius,
-            (not wasHit and gap > radius) and "  <- OUTSIDE THE BOX" or ""))
-
-    elseif volume.shape == HitVolume.Shape.CAPSULE then
-        -- Segment to segment, by two rounds of alternating projection --
-        -- close enough for a report, and deliberately NOT the routine Overlap
-        -- uses, so this stays an independent second opinion.
-        local vStart = volumeOrigin.Position
-        local vEnd = vStart + volumeOrigin.LookVector * volume.length
-        local onVolume = closestOnSegment(vStart, vEnd, (capA + capB) * 0.5)
-        local onTarget = closestOnSegment(capA, capB, onVolume)
-        onVolume = closestOnSegment(vStart, vEnd, onTarget)
-
-        local gap = (onVolume - onTarget).Magnitude
-        local reach = volume.radius + radius
-
-        print(string.format(
-            "         %-10s blade %s..%s  gap %.2f (radii sum %.2f)%s",
-            "", vec(vStart), vec(vEnd), gap, reach,
-            (not wasHit and gap > reach) and "  <- BLADE PASSED CLEAR" or ""))
-
-    else
-        print(string.format("         %-10s distance %.2f to nearest point on the hurtbox",
-            "", distance))
-    end
-
-    if clamping then
-        print(string.format(
-            "         %-10s *** CLAMPING: buffer reaches %.2fs back, rewind wants %.2fs ***",
-            "", oldest, wanted))
+            "         %-10s missed by %.2f studs at %s", "", best, label))
     end
 end
 
--- `query` must be the SAME query object that produced `hits`, or the
--- broadphase figure below describes a different swing than the result does.
---
--- The event id is printed so a line here can be matched to the line
--- InputSystem printed when it sent -- which is what proves the wire, rather
--- than assuming it because something arrived.
+
 function SwingReport.report(player: Player, event, query, hits)
     local now = workspace:GetServerTimeNow()
 
