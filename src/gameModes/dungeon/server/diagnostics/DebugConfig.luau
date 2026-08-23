@@ -73,11 +73,19 @@ local FLAGS = {
     --   WORLD changes as you walk        -> the overlay is attached and riding
     --                                       the body. If it does NOT change,
     --                                       the weld is broken.
-    --   REL ROOT stays fixed             -> zones are anchored to the root,
-    --                                       which is the current design for
-    --                                       client-owned rigs (HitDetection
-    --                                       7.2a). Limbs animating do not move
-    --                                       them, and that is not a bug.
+    --   REL ROOT changes as limbs move   -> the zone is tracking its own limb,
+    --                                       which is what it should do. A zone
+    --                                       whose rel drift stays 0.00 while
+    --                                       the body animates has fallen back
+    --                                       to the root, and the log names the
+    --                                       part it rode: `ROOT (unbound)`
+    --                                       means that limb name is not on
+    --                                       this rig.
+    --
+    -- THIS COMMENT DESCRIBED THE OPPOSITE UNTIL 2026-08-23. Zones hung off the
+    -- root until the mannequin reversal (HitDetection 7.2a), and the stale
+    -- version told a reader that a frozen rel-root column was correct -- which
+    -- would send someone debugging a genuinely broken anchor away satisfied.
     HurtboxLog = false,
 
 

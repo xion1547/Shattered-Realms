@@ -20,9 +20,10 @@
 -- ============================================================================
 --
 -- One capsule around a whole body makes the space BETWEEN its limbs hittable.
--- Fire under a raised arm and it registers. That is the currently shipped
--- behaviour and it is a placeholder, not a design -- the player's single
--- capsule is already about 2.5x too wide horizontally.
+-- Fire under a raised arm and it registers. That was the shipped behaviour
+-- until 2026-08-22 and it was a placeholder, not a design -- the player's
+-- single capsule was about 2.5x too wide horizontally. It is deleted; a body
+-- with no hurtbox is now simply not hittable, asserted at attach.
 --
 -- Complexity is absorbed by COUNT, not by making one primitive cleverer. A
 -- curved horn is three capsules. A tail is four. That is the entire idea.
@@ -53,11 +54,13 @@
 -- > At the speeds a body spends nearly all its time at, the error is under the
 -- > capsule's own thickness. HurtboxDefinitions carries the full argument.
 --
--- WHAT IS STILL OWED, and it is not in this file: resolution rewinds, so each
--- zone needs its own history rather than one buffer per body -- a wing and a
--- torso are in different places at different moments. Until that lands, the
--- overlay reads limbs LIVE and resolution still tests the old single capsule.
--- HitDetection 7.2a.
+-- WHERE THE POSE COMES FROM, since this file deliberately does not fetch it:
+-- `SpatialComponent` keys a ring buffer by `BasePart`, so each zone is rewound
+-- through its OWN limb -- a wing and a torso are in different places at
+-- different moments, and one buffer per body cannot serve both. Resolution
+-- reads `anchorFor(i)` and asks that part's history for the pose at `at`.
+-- HitDetection 7.2a. (Built 2026-08-22; this block previously described it as
+-- still owed.)
 --
 -- ============================================================================
 -- HOW A ZONE LIST GETS AUTHORED

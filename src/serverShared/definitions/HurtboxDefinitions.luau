@@ -40,9 +40,21 @@
 -- > where "defense is generous" (Part 6) already errs your way.
 --
 -- ONE CONSEQUENCE, NAMED. A client owns its own limbs, so it can influence
--- where its zones sit. Bounded rather than banned (HitDetection 7.4) by a
--- clamp on how far a zone may sit from the root. What a liar wins is a
--- slightly displaced arm capsule.
+-- where its own zones sit. Accepted rather than defended against: what a liar
+-- wins is a slightly displaced arm capsule on the DEFENSIVE side, and
+-- "defense is generous" (HitDetection Part 6) already errs their way anyway.
+--
+-- NOTHING ENFORCES A BOUND TODAY. An earlier version of this comment claimed
+-- the displacement was "bounded rather than banned by a clamp on how far a
+-- zone may sit from the root" (HitDetection 7.4) -- there is no such clamp,
+-- in this file or anywhere else, and grepping for one was how that was found.
+-- The bound is the right design if this ever matters; it is not built, and a
+-- comment asserting a safety property the code does not have is worse than no
+-- comment, because it stops anyone from checking.
+--
+-- What WOULD trigger building it: a body whose zones reach far enough from the
+-- root that displacing one meaningfully changes what can hit it. An arm
+-- capsule of radius 0.28 is not that.
 --
 -- ============================================================================
 -- HOW PLAYERS AND BOSSES DIFFER, AND WHY

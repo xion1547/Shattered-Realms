@@ -365,16 +365,26 @@ end
 --                                         body walks? If not, the weld or the
 --                                         attach is broken. Real bug.
 --   "the hurtbox does not bend"        -> is REL ROOT changing as limbs
---                                         animate? It is not supposed to.
---                                         Zones hang off the ROOT for a
---                                         client-owned rig, so a swinging arm
---                                         moves the arm and not its zone.
---                                         Working as designed -- HitDetection
---                                         7.2a -- and the fix is a different
---                                         piece of work, not a repair.
+--                                         animate? It IS supposed to. Every
+--                                         zone rides its own limb, so a
+--                                         swinging arm carries its capsule
+--                                         with it. A zone whose rel drift
+--                                         stays 0.00 through an animation is
+--                                         a real bug: it resolved to the root
+--                                         instead of its limb, and the
+--                                         `on <part>` column says which --
+--                                         `ROOT (unbound)` means that limb
+--                                         name does not exist on this rig.
 --
 -- Printing both columns is what makes the distinction visible instead of
 -- arguable.
+--
+-- > THIS BLOCK SAID THE OPPOSITE UNTIL 2026-08-23, left over from the
+-- > root-anchored design that was built and reversed on 2026-08-22
+-- > (HitDetection 7.2a). It told a reader that a frozen rel-root column was
+-- > working as designed, which is the single most misleading thing a
+-- > diagnostic's own documentation can do -- it explains away the exact
+-- > symptom the diagnostic exists to surface.
 
 local LOG_FLAG = "HurtboxLog"
 local LOG_SECONDS = 2.0
