@@ -18,6 +18,28 @@ function TargetQuery.new(config)
     assert(config.volume, "[TargetQuery] a volume is required")
     assert(type(config.at) == "number", "[TargetQuery] 'at' must be a server timestamp")
 
+    -- A POINT-ANCHORED VOLUME WITHOUT AN ORIGIN HITS NOTHING, SILENTLY, and
+    -- that is why this assert exists rather than being left to the caller.
+    --
+    -- `TargetResolution._origin` returns nil when a POINT volume has no
+    -- origin, and `resolve` turns a nil origin into an empty result -- so a
+    -- ground-targeted AoE with a forgotten origin does not error, does not
+    -- warn, and simply never damages anything. It looks like the overlap maths
+    -- is wrong when nothing is wrong except a missing field.
+    --
+    -- Checked HERE rather than in resolution because this is where the field
+    -- is supplied: the assert names the call site that forgot it instead of a
+    -- stage several layers away that merely noticed.
+    --
+    -- Nothing declares a POINT volume yet, so this has never fired. It is
+    -- cheap and it closes a hole that would otherwise be found by a designer
+    -- wondering why their meteor does nothing.
+    if config.volume.anchor == "POINT" then
+        assert(typeof(config.origin) == "CFrame",
+            "[TargetQuery] a POINT-anchored volume needs an 'origin' CFrame -- "
+                .. "without one it resolves to no targets and never says why")
+    end
+
     return setmetatable({
         -- Who is swinging. Excluded from its own results, and the source of
         -- the volume's origin unless the volume anchors to a point.

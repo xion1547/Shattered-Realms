@@ -439,12 +439,28 @@ function SpatialService:candidatesNear(position: Vector3, radius: number, margin
         local spatial = entity.spatial
         local cf = spatial and spatial:getCFrame()
         if cf then
-            -- THE BOUNDING RADIUS OF THE CAPSULE, not just its thickness. A
-            -- capsule reaches `halfHeight` further from its centre than a
-            -- sphere of the same radius does, and culling on the radius alone
-            -- would discard a tall target whose head or feet were inside the
-            -- volume. Broadphase must never be tighter than the narrow phase.
-            local limit = reach + spatial.radius + spatial.halfHeight
+            -- THE BOUNDING RADIUS OF THE WHOLE HURTBOX, not of the body.
+            --
+            -- BROADPHASE MUST NEVER BE TIGHTER THAN THE NARROW PHASE, and
+            -- getting this wrong produces the worst failure in this layer.
+            -- With a zone list an entity's real extent is its FURTHEST ZONE --
+            -- an outstretched arm reaches well past the torso. Cull on the
+            -- torso and that arm is discarded BEFORE the exact test ever runs,
+            -- so the hit is lost by culling rather than by geometry.
+            --
+            -- That is silent, it looks identical to broken overlap maths, and
+            -- it is far harder to find, because the code that would have found
+            -- the hit never executed to be debugged. Wrong-high costs a few
+            -- extra exact tests; wrong-low costs real hits.
+            --
+            -- The fallback is the single capsule's own bound, for the same
+            -- reason: a capsule reaches `halfHeight` further from its centre
+            -- than a sphere of the same radius, so culling on thickness alone
+            -- would drop a tall target whose head was inside the volume.
+            local hurtbox = entity.hurtbox
+            local extent = hurtbox and hurtbox:boundingRadius()
+                or (spatial.radius + spatial.halfHeight)
+            local limit = reach + extent
             local offset = cf.Position - position
             -- Squared throughout: comparing against limit^2 is the same
             -- test without the square root, and this runs once per attached

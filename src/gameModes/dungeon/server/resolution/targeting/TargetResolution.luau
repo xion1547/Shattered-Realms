@@ -138,6 +138,55 @@ end
 -- deduplicated by entity, so something caught by all three samples of one
 -- swing is still ONE target and takes ONE damage roll -- Part 8's rule,
 -- enforced here rather than trusted to the caller.
+-- Was any part of this body inside the volume at moment `at`?
+--
+-- ONE ZONE IS ENOUGH, so this returns on the first hit rather than testing the
+-- rest. Dedup would discard the others anyway -- an activation applies to an
+-- entity at most once however many moments or zones caught it -- so continuing
+-- is pure wasted arithmetic on the exact test, which is the expensive one.
+--
+-- EACH ZONE REWINDS THROUGH ITS OWN LIMB'S HISTORY. `poseAt(at, part)` reads
+-- the buffer for that specific part, which is why per-part tracking had to
+-- exist before this could. Passing the ROOT pose instead would put every zone
+-- back in the rest arrangement and quietly undo the whole hitzone list.
+--
+-- ENDPOINTS COME FROM THE REWOUND POSE, never the live one. A capsule leans
+-- with the thing it rides, so a target that has rotated since the attacker saw
+-- it has to be reconstructed at the orientation they saw -- which is exactly
+-- why the ring buffer stores CFrames rather than positions.
+--
+-- FALLS BACK TO THE SINGLE CAPSULE when a body has no hurtbox. Transitional:
+-- resolution reads the zone list where one exists and the old
+-- `radius`/`halfHeight` pair where it does not, so nothing stops being
+-- hittable mid-migration. `NextSteps.md` item 3 deletes the fallback and the
+-- fields together.
+function TargetResolution._hits(entity, spatial, origin: CFrame, volume, at: number): boolean
+    local hurtbox = entity.hurtbox
+
+    if not hurtbox then
+        -- nil pose means never sampled -- attached this frame, or already
+        -- detached.
+        local pose = spatial:poseAt(at)
+        if not pose then
+            return false
+        end
+        local capA, capB = spatial:endpoints(pose)
+        return Overlap.test(origin, volume, capA, capB, spatial.radius)
+    end
+
+    for zone = 1, hurtbox:zoneCount() do
+        local pose = spatial:poseAt(at, hurtbox:anchorFor(zone))
+        if pose then
+            local capA, capB, radius = hurtbox:endpoints(zone, pose)
+            if Overlap.test(origin, volume, capA, capB, radius) then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
 function TargetResolution._sweep(query, origin: CFrame, candidates)
     local volume = query.volume
     local attacker = query.attacker
@@ -158,27 +207,9 @@ function TargetResolution._sweep(query, origin: CFrame, candidates)
                 local eligible = (filter == nil) or filter(entity)
                 if eligible then
                     local spatial = entity.spatial
-                    -- Rewound, unlike the origin. nil means never sampled --
-                    -- attached this frame, or already detached.
-                    local pose = spatial and spatial:poseAt(at)
-                    if pose then
-                        -- ENDPOINTS COME FROM THE REWOUND POSE, not the live
-                        -- one. The capsule leans with the body, so a target
-                        -- that has rotated since the attacker saw it must be
-                        -- reconstructed at the orientation they saw -- which
-                        -- is exactly why the ring buffer stores CFrames rather
-                        -- than positions.
-                        --
-                        -- A sphere hurtbox returns the same point twice, so
-                        -- one call covers both shapes with no branch. When
-                        -- HurtboxComponent lands (HitDetection.md §7.7) this
-                        -- becomes a loop over the entity's hitzones, each
-                        -- contributing its own pair.
-                        local capA, capB = spatial:endpoints(pose)
-                        if Overlap.test(origin, volume, capA, capB, spatial.radius) then
-                            seen[entity] = true
-                            table.insert(found, entity)
-                        end
+                    if spatial and TargetResolution._hits(entity, spatial, origin, volume, at) then
+                        seen[entity] = true
+                        table.insert(found, entity)
                     end
                 end
             end
