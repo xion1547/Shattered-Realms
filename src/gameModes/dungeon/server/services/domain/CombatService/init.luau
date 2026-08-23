@@ -66,6 +66,18 @@ local CombatEvent = require(eventTypes:WaitForChild("CombatEvent"))
 -- The sub-domain, required as a child of this module.
 local SkillService = require(script:WaitForChild("SkillService"))
 
+-- A comma-separated list of what an attack caught, or "nothing".
+local function idsOf(entities): string
+    if #entities == 0 then
+        return "nothing"
+    end
+    local names = {}
+    for _, entity in ipairs(entities) do
+        table.insert(names, tostring(entity.identity:getId()))
+    end
+    return table.concat(names, ", ")
+end
+
 -- TEMPORARY. This belongs in the Content Layer next to the skill that owns
 -- it -- a volume is data, and the whole point of HitVolume is that a new
 -- attack shape is a data edit. It sits here only because nothing declares
@@ -439,7 +451,7 @@ function CombatService:OnAttack(player, event, _receivedAt)
     -- replaces this print.
     if DebugConfig.get("AttackLog") then
         print(string.format("[CombatService] %s %s (%s) -- %d hit(s): %s",
-            player.Name, event:getSubType(), volume.shape, #hits, self.idsOf(hits)))
+            player.Name, event:getSubType(), volume.shape, #hits, idsOf(hits)))
     end
 
     -- TRUE IS AN ANSWER TO THE CLIENT, not just a status code. EventRouter
@@ -450,17 +462,6 @@ function CombatService:OnAttack(player, event, _receivedAt)
     return true
 end
 
--- A comma-separated list of what an attack caught, or "nothing".
-local function idsOf(entities): string
-    if #entities == 0 then
-        return "nothing"
-    end
-    local names = {}
-    for _, entity in ipairs(entities) do
-        table.insert(names, tostring(entity.identity:getId()))
-    end
-    return table.concat(names, ", ")
-end
 
 -- SWEEPS -----------------------------------------------------------------
 

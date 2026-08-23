@@ -134,10 +134,6 @@ function HurtboxComponent.new(zones: { Zone })
 
     local copied = table.create(#zones)
 
-    -- Computed here rather than on demand, because it is read once per attack
-    -- per candidate in the broadphase and the zone list never changes. See
-    -- `boundingRadius` for what it is for.
-    local bounding = 0
 
     for index, zone in ipairs(zones) do
         local label = zone.name or tostring(index)
@@ -162,15 +158,15 @@ function HurtboxComponent.new(zones: { Zone })
             name = zone.name,
         })
 
-        -- How far this zone's furthest point sits from the pose it hangs off:
-        -- out to the zone's centre, then along its axis, then its thickness.
-        local extent = zone.offset.Position.Magnitude + zone.halfHeight + zone.radius
-        bounding = math.max(bounding, extent)
     end
 
     return setmetatable({
         zones = table.freeze(copied),
-        _bounding = bounding,
+
+        -- Measured in `bind`, because it cannot be known here: a zone's offset is
+        -- relative to ITS LIMB, and how far that limb sits from the root is a
+        -- property of the body, not of the zone list.
+        _bounding = 0,
 
         -- Resolved per body by `bind`. Empty until then, and every zone falls
         -- back to whatever pose a caller supplies.
@@ -218,6 +214,54 @@ function HurtboxComponent:bind(model: Instance?, root: BasePart?)
 
         self._anchors[index] = part or root
     end
+
+    self:_measureBounding(root)
+end
+
+-- How far any zone can sit from the ROOT, which is what the broadphase culls
+-- against.
+--
+-- IT CANNOT BE COMPUTED FROM THE ZONE LIST ALONE, and getting that wrong is
+-- how a hurtbox silently shrinks. A zone's offset is relative to ITS LIMB, so
+-- summing offset + halfHeight + radius answers "how far does this capsule
+-- reach from its own limb" -- which for a player came out at 1.45 studs while
+-- the real reach from the root was nearly twice that. The cull was tight and
+-- the error was masked only because the volume's own reach dominated it.
+--
+-- So it is measured here, where the limbs actually exist, as
+-- (limb from root) + (zone from limb).
+--
+-- PADDED, BECAUSE THIS IS A REST-POSE MEASUREMENT. Limbs move: an arm raised
+-- overhead puts its capsule much further from the root than the same arm
+-- hanging down. The pad is deliberately generous because the two errors are
+-- not symmetric -- wrong-high costs a few extra exact tests, wrong-low
+-- silently drops real hits before the exact test ever runs.
+--
+-- If it ever proves too tight, the upgrade is a running maximum updated as
+-- limbs are sampled, which is self-correcting. Not built: a fixed pad is
+-- deterministic and costs nothing per tick.
+local REST_POSE_PAD = 2.0
+
+function HurtboxComponent:_measureBounding(root: BasePart?)
+    local bounding = 0
+
+    for index, zone in ipairs(self.zones) do
+        local part = self._anchors[index]
+
+        local fromRoot = 0
+        if part and root and part ~= root and part.Parent and root.Parent then
+            fromRoot = (root.CFrame:Inverse() * part.CFrame).Position.Magnitude
+        end
+
+        local extent = fromRoot
+            + zone.offset.Position.Magnitude
+            + zone.halfHeight
+            + zone.radius
+
+        bounding = math.max(bounding, extent)
+    end
+
+    self._bounding = bounding * REST_POSE_PAD
 end
 
 -- The part zone `index` rides, or nil when nothing has been bound.

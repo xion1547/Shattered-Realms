@@ -50,7 +50,9 @@ local function makeEntity(position: Vector3, radius: number, facing: Vector3?)
         identity = IdentityComponent.new(IdentityRegistry.ENEMY,"TEST_" .. nextId),
         spatial = SpatialComponent.new(),
     }
-    SpatialService:attach(entity, part, radius)
+    SpatialService:attach(entity, part, {
+        { name = "Body", offset = CFrame.identity, radius = radius, halfHeight = 0 },
+    })
 
     table.insert(spawned, { entity = entity, part = part })
     return entity

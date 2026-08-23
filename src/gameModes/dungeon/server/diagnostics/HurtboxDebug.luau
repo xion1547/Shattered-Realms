@@ -549,16 +549,6 @@ function HurtboxDebug.start()
         "[HurtboxDebug] armed at %dHz (flag Debug%s) -- drawing the ZONE LIST, "
             .. "welded, so it cannot trail you", REDRAW_HZ, FLAG))
 
-    -- STATED OUT LOUD BECAUSE IT IS TEMPORARILY TRUE AND WILL NOT BE FOR LONG.
-    -- This line used to read "the glowing volume is what you actually hit",
-    -- which stopped being true the moment zones were drawn while resolution
-    -- still tested the single capsule. A diagnostic that overstates what it is
-    -- showing is worse than no diagnostic, and this one is being read
-    -- specifically to decide whether the zone numbers are any good.
-    print(string.format("    Debug%s logs every zone position, world AND rel-root -- "
-        .. "that pair is what separates \"it does not move\" from \"it does not bend\".", LOG_FLAG))
-    print("    NOTE: resolution still tests the OLD single capsule. These zones "
-        .. "are drawn to be CHECKED, not to be hit with -- HitDetection 0.5.")
     print(string.format(
         "    Debug%s draws the SERVER's copy instead -- the gap it opens up is "
             .. "the round trip rewind exists to undo.", SERVER_VIEW_FLAG))

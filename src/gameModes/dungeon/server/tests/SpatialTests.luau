@@ -29,6 +29,14 @@ local TestRunner = require(script.Parent:WaitForChild("TestRunner"))
 -- A body in the world. Parented to workspace because isAnchored() asks
 -- IsDescendantOf(workspace) -- an unparented part is deliberately not
 -- "in the world" as far as this layer is concerned.
+-- A ONE-ZONE HURTBOX, because attach now requires a shape and these cases are
+-- about the SERVICE -- registration, sampling, culling -- not about geometry.
+-- One capsule keeps them reading as they did before zones existed, and the
+-- zone list itself is covered by the Overlap and HurtboxComponent cases.
+local TEST_ZONES = {
+    { name = "Body", offset = CFrame.identity, radius = 2, halfHeight = 0 },
+}
+
 local function makeAnchor(position)
     local part = Instance.new("Part")
     part.Anchored = true
@@ -220,11 +228,11 @@ return function()
         local entity = entityWith()
         local part = makeAnchor()
 
-        SpatialService:attach(entity, part, 2.5)
+        SpatialService:attach(entity, part, TEST_ZONES)
         a.isTrue(SpatialService:isAttached(entity))
         a.equal(SpatialService:attachedCount(), before + 1)
 
-        SpatialService:attach(entity, part, 2.5)
+        SpatialService:attach(entity, part, TEST_ZONES)
         a.equal(SpatialService:attachedCount(), before + 1, "attaching twice is not two entities")
 
         SpatialService:detach(entity)
@@ -239,7 +247,7 @@ return function()
 
     t:case("attach refuses an entity with no Spatial component", function(a)
         local part = makeAnchor()
-        a.throws(function() SpatialService:attach({}, part, 2) end, "no Spatial component")
+        a.throws(function() SpatialService:attach({}, part, TEST_ZONES) end, "no Spatial component")
         part:Destroy()
     end)
 
@@ -257,7 +265,7 @@ return function()
         local entity = entityWith()
         local part = makeAnchor()
 
-        SpatialService:attach(entity, part, 2)
+        SpatialService:attach(entity, part, TEST_ZONES)
         SpatialService:detach(entity)
 
         a.isFalse(entity.spatial:isAnchored(), "a detached entity is not still holding a body")
@@ -269,7 +277,7 @@ return function()
     t:case("tick records a sample for every attached entity", function(a)
         local entity = entityWith()
         local part = makeAnchor(Vector3.new(5, 0, 0))
-        SpatialService:attach(entity, part, 2)
+        SpatialService:attach(entity, part, TEST_ZONES)
 
         a.equal(entity.spatial:sampleCount(), 0, "attach does not sample")
 
@@ -290,7 +298,7 @@ return function()
         -- would iterate a growing list of corpses every tick.
         local entity = entityWith()
         local part = makeAnchor()
-        SpatialService:attach(entity, part, 2)
+        SpatialService:attach(entity, part, TEST_ZONES)
 
         local before = SpatialService:attachedCount()
         part.Parent = nil
@@ -308,8 +316,8 @@ return function()
         local nearPart = makeAnchor(Vector3.new(0, 0, 0))
         local farPart = makeAnchor(Vector3.new(100, 0, 0))
 
-        SpatialService:attach(near, nearPart, 2)
-        SpatialService:attach(far, farPart, 2)
+        SpatialService:attach(near, nearPart, TEST_ZONES)
+        SpatialService:attach(far, farPart, TEST_ZONES)
 
         local function contains(list, entity)
             for _, found in ipairs(list) do
@@ -341,7 +349,7 @@ return function()
         -- gets the chance to find the hit.
         local entity = entityWith()
         local part = makeAnchor(Vector3.new(12, 0, 0))
-        SpatialService:attach(entity, part, 5)
+        SpatialService:attach(entity, part, TEST_ZONES)
 
         local hits = SpatialService:candidatesNear(Vector3.zero, 8)
         a.isTrue(#hits >= 1, "centre at 12, reach 8, radius 5 -- overlapping")
