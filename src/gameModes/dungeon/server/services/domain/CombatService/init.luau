@@ -44,6 +44,8 @@ local TargetResolution = require(targeting:WaitForChild("TargetResolution"))
 local EntityService = require(authority:WaitForChild("EntityService"))
 local SpatialService = require(authority:WaitForChild("SpatialService"))
 
+local DefinitionLoader = require(serverRoot:WaitForChild("boot"):WaitForChild("DefinitionLoader"))
+
 -- TEMPORARY, like the print at the end of OnAttack. AttackDebug draws the
 -- resolved volume; SwingReport prints the numbers behind it. Two views of the
 -- same swing on purpose -- the drawing shows you WHERE, the report shows you
@@ -81,100 +83,28 @@ local function idsOf(entities): string
     return table.concat(names, ", ")
 end
 
--- TEMPORARY. This belongs in the Content Layer next to the skill that owns
--- it -- a volume is data, and the whole point of HitVolume is that a new
--- attack shape is a data edit. It sits here only because nothing declares
--- skills yet, and it is the ONE volume every basic swing uses.
+-- WHICH SKILL EACH DEBUG KEYBIND FIRES.
 --
--- ARC is the standard melee swing. 120 degrees and 12 studs is wide and
--- generous on purpose: the first thing to prove is that detection fires at
--- all, and a tight volume makes a miss ambiguous between "the math is wrong"
--- and "you were not pointing at it".
--- A SWORD IS A CAPSULE THE SIZE OF A SWORD. It was an ARC -- a 12-stud,
--- 120-degree CONE -- and that was wrong in a way worth recording rather than
--- quietly deleting.
+-- THIS MAP IS THE LAST REMNANT OF THE OLD SHAPE AND IT IS TEMPORARY. What used
+-- to sit here was three HitVolumes typed as locals, keyed by subType -- which
+-- meant the volume was chosen by WHICH BUTTON WAS PRESSED and could not vary by
+-- who was swinging. A goblin, a giant, a dagger and a greatsword all meleed
+-- with the identical 6.5-stud capsule, and there was no path for that to
+-- differ. A projectile attack could not exist at all.
 --
--- An ARC measures the full THREE-DIMENSIONAL angle to a target, so a
--- 120-degree arc opens 60 degrees in every direction including up and down.
--- Jump over an enemy and you still hit them, because they are inside the cone.
--- Nothing about that resembles a sword, and it survived only because it was
--- the first shape written, back when the question was "does detection fire at
--- all" rather than "does it fire correctly".
+-- The volumes are now content (`definitions/skills/`). What remains here is a
+-- much smaller thing: three debug binds naming three skill ids, so the shapes
+-- stay reachable from a keyboard while the real path is built.
 --
--- The dimensions are a sword's, not a placeholder's:
---
---   length 6.5   arm plus blade, pivoting at the body
---   radius 0.5   a blade is THIN. This is the number the cone had no
---                equivalent of at all
---   sweep 160    a horizontal slash, shoulder to shoulder
---   window 0.4   fast, but slow enough to step out of
---
--- Those give 8 wedges automatically (160/20 and 0.40/0.05 both land on 8).
-local BASIC_SWING = HitVolume.resolve({
-    shape = HitVolume.Shape.CAPSULE,
-    length = 6.5,
-    radius = 0.5,
-    sweep = 160,
-    activeWindow = 0.4,
-
-    -- Held at hand height rather than through the middle of the chest. This is
-    -- a guess standing in for a real grip point: when a rigged weapon arrives,
-    -- the offset stops being typed here and gets read from the hand attachment
-    -- the blade is welded to (HitDetection.md §8.4).
-    offset = CFrame.new(0, -0.5, 0),
-
-    maxTargets = 5,
-})
-
--- TEMPORARY, and here to be LOOKED AT rather than shipped.
---
--- These two exist so BOX and CAPSULE have a caller. They were stubbed out of
--- Overlap on the reasoning that nothing declared them -- which was true and
--- was still the wrong call: both are going to carry most of this game's
--- attacks, and "no caller yet" is a thing a keybind fixes in a minute.
---
--- CLEAVE is a wide flat box pushed four studs forward, so it reads as a
--- horizontal bar swept left to right rather than a fan. It is the volume that
--- proves `offset` works at all -- the field was declared, validated and
--- reach-accounted since HitVolume was written, and silently ignored by
--- Overlap until 2026-08-16.
-local CLEAVE = HitVolume.resolve({
-    shape = HitVolume.Shape.BOX,
-    size = Vector3.new(18, 4, 5),
-    offset = CFrame.new(0, 0, -4),
-    maxTargets = 8,
-})
-
--- THRUST is a long thin capsule straight ahead: the shape a spear or a beam
--- wants, and the one case where the client's aim would matter enough to be
--- worth CLIENT_AIM later (§10). Narrow on purpose -- if it catches the same
--- dummies a 120-degree arc does, something is wrong with the maths rather
--- than with the numbers.
--- THRUST is a long thin capsule that SWINGS: the blade itself sweeping
--- through 140 degrees over a third of a second, which is the closest this
--- system gets to a real sword.
---
--- Note what `sweep` changes about reading these numbers. A 140-degree ARC is
--- a fan that is entirely live at once; this is a 20-stud BLADE that is only
--- ever in one place, and travels. A target standing at the far end of the arc
--- has ~0.3s to leave before the blade arrives -- and if it does, it is
--- genuinely missed rather than caught by a fan that was never there.
-local THRUST = HitVolume.resolve({
-    shape = HitVolume.Shape.CAPSULE,
-    length = 20,
-    radius = 1.5,
-    sweep = 140,
-    activeWindow = 0.35,
-    maxTargets = 4,
-})
-
--- Which volume each subType resolves with. A table rather than an if-chain
--- for the reason the Overlap dispatch is one: an unmapped subType should be
--- findable, not silently fall through to the basic swing.
-local VOLUME_BY_SUBTYPE = {
-    [CombatEvent.SubType.MELEE] = BASIC_SWING,
-    [CombatEvent.SubType.AOE] = CLEAVE,
-    [CombatEvent.SubType.RANGED] = THRUST,
+-- WHAT REPLACES IT: the event names its own skill, and the attacker's own
+-- definition says whether they own it. That is one line here plus a real
+-- VALIDATE phase -- deliberately not built now, because this restructure is
+-- moving configuration out of code and is NOT the skill system. SkillService
+-- stays a stub.
+local SKILL_BY_SUBTYPE = {
+    [CombatEvent.SubType.MELEE] = "BASIC_SWING",
+    [CombatEvent.SubType.AOE] = "CLEAVE",
+    [CombatEvent.SubType.RANGED] = "THRUST",
 }
 
 local CombatService = {}
@@ -210,18 +140,39 @@ function CombatService:boot()
     -- TODO: declare Combat.OnHit / OnKill / OnParrySuccess once those names
     -- are in this place's vocabulary.
 
-    -- Volumes are validated at boot rather than on first use, so a malformed
-    -- one fails at startup instead of the first time a player presses attack.
-    -- When volumes move to content this becomes a loop over all of them.
+    -- CONTENT LOADS AND VALIDATES HERE, before anything can ask for a skill.
+    -- `DefinitionLoader.load` resolves every volume through HitVolume and
+    -- collects every problem into one boot failure naming the file -- so a
+    -- malformed volume stops the server rather than surfacing the first time
+    -- somebody presses attack.
+    --
+    -- This used to be a loop over three locals declared in this file. That it
+    -- is now a loop over content is the entire point of the restructure.
+    local content = DefinitionLoader.load()
+
     -- TEMPORARY, and paired with SwingReport: the STARTING VALUES, printed
     -- once, so a swing's numbers can be read against what was declared rather
     -- than against memory. Half of "why did that miss" is answered by the
     -- volume being a different size than anyone thought.
-    print("[CombatService] volumes declared:")
-    for subType, volume in pairs(VOLUME_BY_SUBTYPE) do
-        local ok, reason = HitVolume.validate(volume)
-        assert(ok, string.format(
-            "[CombatService] the %s volume is malformed: %s", subType, tostring(reason)))
+    local skillIds = {}
+    for id in pairs(content.skills) do
+        table.insert(skillIds, id)
+    end
+    table.sort(skillIds)
+
+    print(string.format("[CombatService] %d skill(s) loaded:", #skillIds))
+    for _, id in ipairs(skillIds) do
+        local skill = content.skills[id]
+
+        if skill.planned then
+            -- Printed rather than skipped. A reserved name that never appears
+            -- reads as a name nobody chose, and the point of declaring one
+            -- early is that it is visible.
+            print(string.format("    %-14s PLANNED -- no volume yet", id))
+            continue
+        end
+
+        local volume = skill.volume
 
         local sweepNote = ""
         if (volume.sweep or 0) > 0 then
@@ -235,14 +186,22 @@ function CombatService:boot()
                 limits.maxDegrees, limits.maxSeconds * 1000)
         end
 
-        print(string.format("    %-8s %-8s reach=%.1f  maxTargets=%s  offset=%s%s",
-            subType,
+        print(string.format("    %-14s %-8s reach=%.1f  maxTargets=%s  offset=%s%s",
+            id,
             volume.shape,
             HitVolume.reach(volume),
             tostring(volume.maxTargets),
             volume.offset and tostring(volume.offset.Position) or "none",
             sweepNote))
     end
+
+    local enemyIds = {}
+    for id in pairs(content.enemies) do
+        table.insert(enemyIds, id)
+    end
+    table.sort(enemyIds)
+    print(string.format("[CombatService] %d enem(y/ies) loaded: %s",
+        #enemyIds, #enemyIds > 0 and table.concat(enemyIds, ", ") or "none"))
 
     local spatial = SpatialService:constants()
     print(string.format(
@@ -306,13 +265,23 @@ function CombatService:OnAttack(player, event, _receivedAt)
     -- Held in a local rather than inlined, so the diagnostic below reports on
     -- the SAME query that produced the result. Rebuilding it would describe a
     -- different swing by a frame.
-    -- TEMPORARY: three shapes on three binds, so BOX and CAPSULE can be seen
-    -- working. When skills exist this is `skill.volume`, and the subType stops
-    -- choosing geometry.
-    local volume = VOLUME_BY_SUBTYPE[event:getSubType()]
-    if not volume then
-        return false, "NO_VOLUME_FOR_SUBTYPE"
+    -- THE VOLUME IS THE SKILL'S, and the skill is content.
+    --
+    -- The subType still picks WHICH skill, which is the temporary half -- three
+    -- debug binds. What is no longer temporary is where the geometry comes
+    -- from: `skill.volume`, resolved and frozen at boot from a definitions
+    -- file, rather than a local typed in this service.
+    --
+    -- That is what makes a per-attacker volume expressible at all. Whether a
+    -- goblin's swing differs from a giant's is now a content question with a
+    -- content answer, instead of being structurally impossible.
+    local skillId = SKILL_BY_SUBTYPE[event:getSubType()]
+    if not skillId then
+        return false, "NO_SKILL_FOR_SUBTYPE"
     end
+
+    local skill = DefinitionLoader.skill(skillId)
+    local volume = skill.volume
 
     -- A SWEEPING VOLUME TAKES THE OTHER PATH. It cannot resolve here: most of
     -- its window has not happened, and there is no history of the future

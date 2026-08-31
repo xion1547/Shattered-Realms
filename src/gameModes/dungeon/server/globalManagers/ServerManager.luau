@@ -47,6 +47,7 @@ local PLAYER_HURTBOX_HALF_HEIGHT = 1.5
 local ServiceLoader = require(bootFolder:WaitForChild("ServiceLoader"))
 local PlaceManifest = require(bootFolder:WaitForChild("PlaceManifest"))
 local BootValidation = require(bootFolder:WaitForChild("BootValidation"))
+local DefinitionLoader = require(bootFolder:WaitForChild("DefinitionLoader"))
 local Scheduler = require(bootFolder:WaitForChild("Scheduler"))
 local EventRouter = require(serverRoot:WaitForChild("eventTape"):WaitForChild("EventRouter"))
 local EventRoutingRegistry = require(serverRoot:WaitForChild("eventTape"):WaitForChild("EventRoutingRegistry"))
@@ -101,6 +102,19 @@ function ServerManager:init()
     -- Content is validated before any Service reads it. Discovering a broken
     -- stat block when a boss spawns is far worse than at boot.
     BootValidation.checkDefinitions()
+
+    -- CONTENT LOADS HERE, AHEAD OF THE SERVICES THAT READ IT, and the ordering
+    -- is about the error message rather than about correctness.
+    --
+    -- `ServiceLoader` pcalls each service's boot and reports failures as
+    -- "'CombatService': <error>". Loading content there would turn a typo in
+    -- `skills/BasicSwing.luau` into a service boot failure -- true, and it names
+    -- the wrong file. Loaded here, a malformed volume fails as what it is:
+    -- a content problem, naming the definition file and the row.
+    --
+    -- The result is cached, so every later caller gets the same tables without
+    -- re-walking the folders.
+    DefinitionLoader.load()
 
     -- Two-way manifest check, then boot in dependency-layer order.
     self.services = ServiceLoader.load(serverRoot:WaitForChild("services"), PlaceManifest)

@@ -40,9 +40,13 @@ local authority = serverRoot:WaitForChild("services"):WaitForChild("authority")
 local EntityService = require(authority:WaitForChild("EntityService"))
 local SpatialService = require(authority:WaitForChild("SpatialService"))
 local EnemyEntity = require(serverRoot:WaitForChild("entities"):WaitForChild("EnemyEntity"))
-local EnemyTemplates = require(serverShared:WaitForChild("definitions"):WaitForChild("EnemyTemplates"))
 local HurtboxDefinitions = require(serverShared:WaitForChild("definitions")
     :WaitForChild("HurtboxDefinitions"))
+
+-- Enemies come from the loader now, not from a single `EnemyTemplates` table.
+-- One file per enemy, walked at boot -- so adding one is a file and nothing
+-- else, and this spawner never learns that the list grew.
+local DefinitionLoader = require(serverRoot:WaitForChild("boot"):WaitForChild("DefinitionLoader"))
 
 local COUNT = 10
 
@@ -102,7 +106,7 @@ local function piece(name: string, shape: Enum.PartType, size: Vector3, cf: CFra
 end
 
 local function spawnDummy(index: number)
-    local entity = EnemyEntity.new(EnemyTemplates.GOBLIN)
+    local entity = EnemyEntity.new(DefinitionLoader.enemy("GOBLIN"))
     local id = tostring(entity.identity:getId())
 
     local centre = ORIGIN + Vector3.new((index - (COUNT + 1) / 2) * SPACING, 0, 0)

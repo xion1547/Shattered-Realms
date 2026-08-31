@@ -29,7 +29,8 @@ local function generateId()
     return "ENEMY_" .. nextId
 end
 
--- `template` is a Content Layer definition (EnemyTemplates). It is read once,
+-- `template` is a Content Layer definition (`definitions/enemies/<Name>.luau`,
+-- handed over by `DefinitionLoader`). It is read once,
 -- here, to seed starting values -- and never consulted again. See Part 3's
 -- Definition vs. Entity distinction.
 function EnemyEntity.new(template)
