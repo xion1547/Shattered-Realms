@@ -215,12 +215,28 @@ local function drawCapsule(idPrefix: string, capA: Vector3, capB: Vector3, radiu
     local delta = capB - capA
     local length = delta.Magnitude
     if length > 0 then
-        -- A Part's Size.Z runs along its local -Z, which is where lookAt
-        -- points -- so a block of this length centred on the midpoint and
-        -- looking at capB spans exactly the segment.
-        shaft = spawnPiece(idPrefix .. "_shaft", Enum.PartType.Block,
-            Vector3.new(diameter, diameter, length),
-            CFrame.lookAt(capA + delta * 0.5, capB), serverView, anchor)
+        -- A CYLINDER, NOT A BLOCK, and the difference is 27% of the shaft.
+        --
+        -- This drew a Block until 2026-08-23 -- a SQUARE cross-section where
+        -- the real capsule has a round one, so the picture bulged at four
+        -- corners the hurtbox does not have. A square circumscribing a circle
+        -- has about 27% more area, which is the same number that argues
+        -- against box hurtboxes in the first place.
+        --
+        -- That made the one tool meant to be trustworthy quietly wrong in the
+        -- generous direction: things looked like they should have been hit.
+        --
+        -- ROBLOX'S CYLINDER HAS ITS CIRCULAR FACES ON X, which is why one
+        -- inserted in Studio arrives lying on its side, and why Size is
+        -- (length, diameter, diameter) rather than the other way round.
+        --
+        -- `lookAt` points local -Z at capB, so the frame needs a quarter turn
+        -- about Y to bring local X onto that axis: a +90 degree Y rotation
+        -- takes (1,0,0) to (0,0,-1), which is exactly where lookAt is aiming.
+        shaft = spawnPiece(idPrefix .. "_shaft", Enum.PartType.Cylinder,
+            Vector3.new(length, diameter, diameter),
+            CFrame.lookAt(capA + delta * 0.5, capB) * CFrame.Angles(0, math.pi / 2, 0),
+            serverView, anchor)
     end
 
     return a, b, shaft
@@ -351,7 +367,14 @@ local function reposition(pieces, spatial, hurtbox)
 
         if zone.shaft then
             local delta = capB - capA
+            -- THE SAME QUARTER TURN `drawCapsule` APPLIES. The shaft is a
+            -- Cylinder and Roblox puts its circular faces on X, so without this
+            -- ServerView would lay every shaft sideways across the body while
+            -- the welded mode drew them correctly -- two modes disagreeing about
+            -- a shape, which is exactly the kind of finding this tool is
+            -- supposed to produce rather than manufacture.
             zone.shaft.CFrame = CFrame.lookAt(capA + delta * 0.5, capB)
+                * CFrame.Angles(0, math.pi / 2, 0)
         end
     end
 end
