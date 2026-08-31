@@ -1,6 +1,27 @@
-# Timeline
+# Timeline — now the Conductor
 
-### Property tracks over time, why nothing in the engine plays them, the module that will, and the editor that authors them
+### Property tracks over time, why nothing in the engine plays them, the module that does, and the editor that authors them
+
+> **THE SYSTEM IS CALLED THE CONDUCTOR AND THE DOCUMENT IT PLAYS IS A SCORE.**
+> This file is still named `Timeline.md` and every reference to `Timeline.luau`
+> below is stale by that much.
+>
+> The rename is not cosmetic. `Timeline.play(timeline)` uses one word for the
+> engine and the data; **`Conductor.play(score)` reads as a sentence.** And a
+> conductor's literal job is keeping an ensemble *in time*, which is the
+> requirement this whole document exists for.
+>
+> The filename is doc debt. The concepts below are current unless a Part says
+> otherwise.
+
+> **REVISED 2026-08-23, and two things below were REVERSED.** Read Part 15
+> before trusting Parts 9–10:
+>
+> 1. **The Conductor owns ALL client-side animation**, rig clips included.
+>    Part 10.1's "they are separate, and neither reads the other" is overruled.
+> 2. **The Score owns the clock.** An implementation that made a clip the master
+>    and the Score a follower was built and reversed the same day; it made this
+>    document's own headline example — the delayed slash — unexpressible.
 
 > **What this document is.** Roblox ships exactly one animation player. It
 > bends joints, and that is the entirety of what it does. Everything else that
@@ -10,9 +31,9 @@
 > fills that gap, what shape the data takes, where the code lives, what
 > authors it, and what it is forbidden from doing.
 >
-> **Status of the system: UNBUILT.** A prototype is planned as the opening
-> move of animation work — Part 13 states the plan and why it is a prototype
-> rather than a build.
+> **Status of the system: BUILT 2026-08-23, NEVER RUN.** The engine, the
+> triggers and the authoring tool all exist and boot; no Score has been played
+> and no slider has been dragged. Part 13 has the file-by-file state.
 >
 > **Status tags** carry the same meanings as `Architecture-Reference.md`:
 > SETTLED, PROVISIONAL, UNBUILT, SUPERSEDED.
@@ -871,6 +892,79 @@ only two.
 **Status:** SETTLED. Each kept with the test that catches it, not the story of
 who said what.
 
+> **Two entries below are REVERSALS of things this document previously
+> asserted**, marked inline. Both were built before being caught.
+
+**~~The Conductor plays property tracks; rig animation is a separate system
+neither reads.~~ OVERRULED 2026-08-23.** Part 10.1 argued they share the word
+"animation" and no mechanism. True of the *assets* — a clip has an upload step,
+a cloud id and an ownership constraint; a Score has none of those. **False of
+the transport**, which is the thing that actually matters.
+
+**The Conductor is now the single door for all client-side animation.** It does
+not reimplement the `Animator` — it *drives* it. A clip track says "start this
+clip at t=0.2" and the Animator still does the joint work. What that buys:
+**the clip's clock and the property tracks' clock are the same clock by
+construction**, rather than by two systems agreeing to stay in step.
+
+A bare clip becomes the degenerate case — a Score with one clip track and no
+property tracks — the same trick as a sphere being a zero-length capsule.
+Nothing downstream learns the simple case exists.
+
+*The test that catches the old position: two systems that must agree about time
+are two clocks. How do you prove they have not drifted?*
+
+---
+
+**~~The Score follows a clip's clock, reading `AnimationTrack.TimePosition`.~~
+REVERSED 2026-08-23, on the day it was built.**
+
+It was justified as making drift impossible: with only one clock there is
+nothing to diverge. That is true and it broke three things:
+
+| Broken | How |
+|---|---|
+| **The delayed slash** | 0.4s clip, 800ms silence, burst at 1.2s — **this document's own headline example.** If the clip is the clock, the clock ends at 0.4s and the burst never fires |
+| **Two clips** | no answer for which one to read the clock from |
+| **Anything before the clip** | a wind-up at t=0.1 has no moment to exist at |
+
+**And the drift argument dissolved once the Conductor started the clip itself.**
+It sets the rate and knows the start moment, so there is nothing to diverge
+*from*. Drift only existed *because* something else owned the clock — the
+justification was an artifact of the design it was justifying.
+
+*The test: can the Score outlive its clip? If not, the clip is the clock and
+silence after it is unexpressible.*
+
+---
+
+**~~Each Playback captures and restores its own baseline.~~ REPLACED
+2026-08-23 with refcounted ownership.**
+
+Correct for one Score at a time and quietly destructive the moment two overlap,
+because `captureBaseline` reads the CURRENT value — which is the other Score's
+in-flight one:
+
+```
+A starts    baseline = red       correct, nothing has written
+A runs      value is now ORANGE  mid-fade
+B starts    baseline = ORANGE    <- reads A's in-flight value
+B finishes  restores ORANGE      <- stuck at a mid-animation value, forever
+```
+
+So the mechanism that exists to prevent permanent debris **created** permanent
+debris — and the trigger is spam-clicking one attack, not some exotic overlap.
+
+**The rule now: the first Score to touch a property captures the original; the
+last one to let go puts it back.** Refcounted in `conductor/Baseline.luau`.
+
+A simpler "one owner per property, starting a second stops the first" was
+considered and rejected as too coarse: a hit-flash and a swing on the same blade
+touch *different* properties and are legitimately concurrent.
+
+*The test: start the same Score twice, overlapping. Does the property end up
+where it started?*
+
 **Buy the plugin because the free editor lacks IK.** False premise. Studio's
 Animation Editor has a **Manage IK** window, documented in Roblox's current
 Animation Editor reference. The claim traces to SEO content farms, and it
@@ -944,16 +1038,28 @@ will exist at runtime?* Part 8.1.
 
 ## Part 13 — Current State And The Prototype Plan
 
-**Status:** as of 2026-08-19.
+**Status:** as of **2026-08-23**. Steps 1 and 2 of the plan below are BUILT.
 
 | Piece | Status | Note |
 |---|---|---|
-| `client/playback/Timeline.luau` | ABSENT | Designed, Parts 3–4 |
-| The editor | ABSENT | Designed, Part 7 |
-| `shared/definitions/Timelines/` | ABSENT | Nothing authored yet |
-| `assets/models/effects/` | ABSENT | `assets/` currently holds two PNGs; the `.rbxm` path in `AssetPipeline.md` Part 6 is unbuilt |
-| Existing effects | Hand-written `TweenService` calls | Correct for the current count |
-| Ease library | ABSENT | Linear and Cubic via `Enum.EasingStyle` first (Part 4.2) |
+| `client/playback/conductor/` | **BUILT 2026-08-23** | Four files: `init` (the door), `Evaluate` (stateless), `Baseline` (ownership), `Playback` (one running Score) |
+| `shared/types/Score.luau` | **BUILT** | The shape. Outside `definitions/scores/` so a loader walking that folder cannot mistake a type module for content |
+| Property tracks, both clocks, restore | **BUILT** | Numbers, booleans, Color3, Vector2/3, UDim, UDim2, CFrame. Linear + Cubic only |
+| Clip tracks | **BUILT** | A `ClipPlayer` is injected, so the engine still knows nothing about Animators or manifests |
+| The editor | **BUILT 2026-08-23** | `client/diagnostics/conductorTool/`. Sliders, key, scrub, play, export-to-console. Gated on `DebugConductorTool` |
+| `shared/definitions/scores/` | **EMPTY** | Deliberately. A Score is authored by looking, and there is nothing to look at yet |
+| Triggers | **BUILT 2026-08-23** | `conductor/Actions.luau`. Two actions — `EMIT`, `SOUND` — dispatched by label. **Deferred at first and that was wrong**: a particle burst is `Emit(n)`, a *method*, and no property track expresses it at any key density |
+| Server-anchored clock | ABSENT | `elapsed = GetServerTimeNow() - anchor`. One line, and nothing needs it until a combo or cutscene exists |
+| Boot path validation | ABSENT | The only defence against a renamed part silently animating nothing |
+| **A timeline VIEW in the editor** | **BUILT 2026-08-23** | Every clip, track and trigger as a bar on one shared axis, with a playhead. Click a lane to select it, click the ruler to scrub. The panel drags by its header and resizes from a corner grip |
+| Select-to-edit inspector | **BUILT 2026-08-23** | One thing at a time. The flat version put every track's controls inline, which is fine for two tracks and pushes the timeline off the bottom of the panel at ten |
+| Baking / precompute | ABSENT | Part 5.3's trade. Real for a long Score, overhead for a half-second one |
+| `assets/models/effects/` | ABSENT | `assets/effects/` is mapped and empty |
+| Ease library | **BUILT, four entries** | Linear, Cubic In/Out/InOut, hand-written rather than via `Enum.EasingStyle` |
+
+> **NOTHING HERE HAS EVER RUN.** Every line was written and unvalidated as of
+> 2026-08-23. Treat the first live session as the prototype this Part describes,
+> not as a regression hunt.
 
 ### The plan, in order
 

@@ -328,12 +328,26 @@ Client for the player, server for everything else (Part 3).
 
 ```
 src/shared/definitions/AnimationManifest.luau    ids, priority, fade, loadFor
-src/client/playback/Animation.luau               play(id, context)
+src/…/client/playback/Rig.luau                   play(name) -> AnimationTrack?
 ```
 
-`Animation.play` is the only thing that touches an `Animator`. It never
-decides *whether* to play — InputSystem and Presenters decide; playback
-renders. This is the PLAYBACK concern from `Client-Architecture.md`.
+> **BUILT 2026-08-23 as `Rig.luau`, not `Animation.luau`.** Two reasons, both
+> biting at a require site: `Animation` **is a Roblox class** — the near-empty
+> Instance this module instantiates — and Part 1 already warns that three
+> things wear that word. What it owns is one BODY's tracks, and the body is
+> what invalidates them.
+>
+> **And it is flagged for replacement.** It is hardcoded to `LocalPlayer`,
+> `Humanoid` and `CharacterAdded`, so it cannot animate a sword prop, a door or
+> a boss — all of which are rigs. The Conductor is the single door for
+> client-side animation (`Timeline.md` Part 12), and it takes an injected
+> clip player rather than requiring this. The parts worth salvaging: one
+> rebuild path for respawn and loadout, refusing to *create* an `Animator`, and
+> the `Length`-reads-0 check.
+
+It is the only thing that touches an `Animator`. It never decides *whether* to
+play — InputSystem and Presenters decide; playback renders. This is the
+PLAYBACK concern from `Client-Architecture.md`.
 
 ### 7.1 — Cache the track, not the Animation instance
 
@@ -837,15 +851,18 @@ asset-side source of truth (Part 9.7). Reach and angle stay hand-authored.
 
 **Status:** as of 2026-08-16.
 
+**Status:** as of **2026-08-23**.
+
 | Piece | Status | Note |
 |---|---|---|
-| `AnimationRegistry.luau` | EXISTS, misplaced | Under `shared/eventTape/event/animation/`, two placeholder ids, referenced only by tests. Should become `shared/definitions/AnimationManifest.luau` |
-| `AnimationEvent.luau` | EXISTS, conflicts | `withId`/`withSpeed`/`withLooped` is the command shape Part 15 rejects. Test-only; no production caller. **Do not delete yet** — EventTape tests use it as their round-trip fixture, so removing it drops coverage of an unrelated system. Replace the fixture first |
-| `client/playback/Animation.luau` | ABSENT | |
-| Boot validation | ABSENT | |
+| `shared/definitions/AnimationManifest.luau` | **BUILT 2026-08-23** | Name → id, plus `priority`, `fadeTime`, `loadFor`. Carries a `NOT_UPLOADED` sentinel so "nobody has uploaded this" is distinguishable from "an id is here and it is wrong" |
+| `client/playback/Rig.luau` | **BUILT, FLAGGED FOR REPLACEMENT** | Track cache, rebuild-on-respawn, `Length > 0` resolve check. Named `Rig` not `Animation` because `Animation` is a Roblox class this module instantiates. **Player-character-only**, and the Conductor is meant to be the single door for client animation — so this is a special case sitting where a general primitive belongs |
+| `AnimationRegistry.luau` | **DEAD, replaced** | Zero real callers — the only hits are three comments about it. Superseded by the manifest; still on disk |
+| `AnimationEvent.luau` | EXISTS, conflicts | `withId`/`withSpeed`/`withLooped` is the command shape Part 15 rejects. **Do not delete** — `EventRegistry`, `EventBuilder`, `EventSchema` and `Validators` all reference it, and two test files use it as their round-trip fixture. Replace the fixture first |
+| Boot validation | **PARTIAL** | Manifest shape is validated at client boot and throws. Whether an id *resolves* is `AnimationTrack.Length > 0`, checked once per rebuild, off the main flow |
 | Marker pipeline | ABSENT, correctly | Nothing needs frame-accurate timing yet |
-| Asset owner decision | **NOT MADE** | Blocks the first upload (Part 4) |
-| Any uploaded animation | none | |
+| Asset owner decision | **MADE 2026-08-16, group created 2026-08-22** | GROUP. Nothing is blocked |
+| Any uploaded animation | **none — the one thing blocking everything downstream** | `AnimationWorkflow.md` is the step order |
 
 ---
 

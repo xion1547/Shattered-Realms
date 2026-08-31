@@ -11,177 +11,103 @@
 > be attacked on its merits rather than trusted because it is written down
 > (`WorkingAgreement.md`).
 >
-> **Revised 2026-08-22.** The hurtbox rebuild is finished; the next phase is
-> animation.
+> **Revised 2026-08-23.** Items 1 and 3 are done. The queue now runs through
+> the animation workflow — see `AnimationWorkflow.md` for the step order.
 
 ---
 
 ## Where things stand
 
-**Hit detection is done except for one refactor.**
-
 | | |
 |---|---|
-| Hurtboxes | **DONE.** Ten limb-anchored zones per player, per-zone history, resolution testing them. Single capsule deleted |
+| Hurtboxes | **DONE.** Ten limb-anchored zones per player, per-zone history, resolution testing them |
+| Attack definitions | **DONE 2026-08-23.** Content walks a folder; `CombatService` holds no volumes |
+| The Conductor | **BUILT 2026-08-23**, never run. Property + clip tracks, one transport |
+| The authoring tool | **BUILT 2026-08-23**, never run |
 | Suite | **206 passed, 0 failed** |
-| Verified live | swings resolve, AOE resolves, zones follow the pose |
-| Left in this layer | the attack-definition restructure, item 1 below |
-
-**Animation is the next layer, and everything downstream waits on it.** The
-hitbox side of hit detection (`motion = PATH`) cannot be authored without a
-Conductor, and a Conductor is animation work.
+| Blocking everything downstream | **one uploaded animation.** Art time, not code |
 
 ---
 
-## 1 — Attack definitions out of `CombatService`
+## 0 — The first clip, end to end
 
-**Status:** UNBUILT. Small, independent, and the last hit-detection item.
+**Status:** the only thing actually blocking. **`AnimationWorkflow.md` is the
+step-by-step**; this is why it is first.
 
-### The finding that forces it
+Every remaining item is easier to judge once a swing exists on screen, and two
+of them cannot be *validated* without one — the Conductor's tandem behaviour and
+the tool's clip track both need a real `AnimationTrack` to act on.
 
-```lua
-[CombatEvent.SubType.MELEE] = BASIC_SWING,
-```
-
-**That map is keyed by which button was pressed, not by who is swinging.** A
-goblin, a giant, a player with a dagger and a player with a greatsword all
-melee with the identical 6.5-stud capsule. The volume *cannot* vary by
-attacker — there is no path for it to.
-
-### What is actually wrong
-
-The engine is fine. `HitVolume` already **is** the declarative half — shape
-vocabulary, defaults, validation, wedge derivation. **The configuration is
-squatting in code.** Three volumes are typed as locals inside a domain Service,
-so adding an attack means editing `CombatService`, which fails the
-architecture's own test: *adding content should be a data edit.*
-
-### Skills and attacks are one concept
-
-Compare the bookkeeping, the way `PetRoster` was compared to `Equipment`:
-
-| | Basic attack | Skill |
-|---|---|---|
-| volume, `activeWindow`, animation | ✓ | ✓ |
-| cooldown | short | longer |
-| cost, unlock | none | some |
-
-Same shape, different fields populated. **A basic attack is a skill with no cost
-and no unlock.** Two parallel systems would mean two lookups, two validators,
-and two places to add a field forever. The vocabulary already exists —
-`skillId`, `SkillService:isUnlocked`, `isReady`.
-
-### The shape
-
-```
-serverShared/definitions/
-    enemies/          walked at boot -- drop a file in, it exists
-        Goblin.luau       stats, hp, loot, AND its skills, inline
-        Archer.luau
-    skills/           walked at boot
-        Warrior.luau      player skills by class
-    Hurtboxes.luau
-    Resources.luau
-```
-
-**The loader is the load-bearing part.** Rojo turns a folder into an Instance,
-so boot walks `GetChildren()` and requires each. Adding an enemy is then **one
-new file and zero code edits.** An index file listing the modules would be the
-same problem in more files — which is the thing this is meant to fix.
-
-**Skills live inline in an entity's file** until a second entity actually wants
-one, then move to `skills/Shared.luau` and get referenced by id. Not
-preemptively.
-
-**`EnemyTemplates` becomes `definitions/enemies/`.** Architecture Part 3 names
-the role — *"Definition: owns the idea, not the instance"* — and `Template` is a
-synonym that costs a mental translation on every read.
-
-### Scope caution
-
-**Do not let this become the skill system.** `SkillService`, cooldowns, damage
-numbers and unlocks all stay stubs. Those are a different job, and dragging them
-in is how a config move becomes a week.
+**It is art time, not code time.** Build the prefab, author the swing, publish
+under the group, paste one id. Nothing in the repo blocks it.
 
 ---
 
-## 2 — Animation: the first clip, end to end
+## ~~1 — Attack definitions out of `CombatService`~~ — DONE 2026-08-23
 
-**Status:** UNBUILT. **This is the next phase.**
+**What landed:** `serverShared/definitions/enemies/` and `skills/`, one file
+per thing, walked at boot by `boot/DefinitionLoader.luau`. `EnemyTemplates` is
+deleted. `CombatService` lost 95 lines and holds no volumes.
 
-### ~~Blocked on the Roblox group~~ — DONE 2026-08-22
+**Three decisions inside it worth not re-deriving:**
 
-**The group exists and the experience has been transferred to it.** That was
-the only irreversible step in the pipeline: an animation asset must be owned by
-the same account or group that owns the experience, group role permissions are
-documented as **not working properly for animations**, and a personal-account
-asset does not transfer — it gets re-uploaded.
+**Skills are FLAT, not grouped by class.** `skills/Warrior.luau` was built and
+reversed the same day. `Gameplay-Design.md`'s mitigation table keys availability
+on *weapon weight* (`"parryable only by a heavy weapon"`) **and** on class
+(`"only the Mage's redirect"`) — so availability is already many-to-many across
+two axes, and a folder encodes exactly one. Every grouping axis fails: by class
+breaks on a sword-mage, by weapon on a magic sword, by mechanic on a skill that
+parries and redirects. **The id is the only stable key**, and who may use a
+skill is a separate list on whatever owns that relationship.
 
-**Every upload from here goes under the group.** Nothing personal, ever.
+**A volume in a definition is a PLAIN TABLE**, not a `HitVolume.resolve` call.
+`serverShared` maps to every place; `HitVolume` exists in one. A require upward
+would fail *on load* in the Hub and take the whole definitions tree with it. The
+loader resolves them, because the loader is place code.
 
-### Then, in order
+**Content loads in `ServerManager`, before services boot.** `ServiceLoader`
+pcalls each boot and reports `'CombatService': <error>` — loading content there
+would name the wrong file for a typo in a definition.
 
-1. **Insert an R15 rig, author one swing, set priority to `Action` at author
-   time.** A swing authored at `Core` is silently overpowered by the default
-   walk cycle and looks exactly like a failed asset load — the standard first
-   bug.
-2. **Publish it. Record the id.**
-3. **`Clips.luau`** — name → assetId, priority, fadeTime.
-4. **`Rig.luau`** — builds and caches `AnimationTrack`s, rebinds on respawn.
-   Death produces a new rig with a new `Animator`; every cached track from the
-   old body is dead, and the same code path must handle both respawn and
-   loadout change or one of them will rot.
-5. **One line in `InputSystem`** to play it.
-
-**That loop validates ownership, upload, the manifest, track caching and
-rebinding** — none of which anything else in the repo exercises.
-
-### What is settled about animation
-
-| | |
-|---|---|
-| Ownership | **GROUP.** Must hold from the first upload |
-| Rig | **R15** |
-| Who plays a player's clip | **the client**, optimistically, before sending. The server round trip is the whole feel of the weapon |
-| Who plays an NPC's clip | **the server.** Client-started never replicates |
-| The animation never crosses the wire | client sends the skill; the server validates the skill and returns the damage. The clip is a private rendering decision |
-| Markers never drive damage | client-side, on the wrong clock |
-
-**Moon Animator is a tool preference with no architectural consequence for the
-rig half** — its joint export is a normal `KeyframeSequence` that publishes like
-any other. Its *property* half is what `Timeline.md` replaces.
+**What is still temporary:** `SKILL_BY_SUBTYPE`, three debug keybinds mapping to
+three skill ids. The event will eventually name its own skill and VALIDATE will
+check the attacker owns it. That is the skill system, deliberately not built.
 
 ---
 
-## 3 — The Conductor
+## ~~3 — The Conductor~~ — BUILT 2026-08-23, NEVER RUN
 
-**Status:** DESIGNED (`Timeline.md`), UNBUILT. Gated on item 2.
+Four files in `client/playback/conductor/`. `Timeline.md` Part 13 has the
+state, Part 12 has the two reversals. The authoring tool is
+`client/diagnostics/conductorTool/`, gated on `DebugConductorTool`.
 
-Plays a **Score**: property tracks, action tracks, and clip tracks on one
-transport. `Conductor` is the engine, `Score` is the document.
+**Validating it is item 0.** Everything about it is argued and unvalidated.
 
-**The requirement is *tandem*, not interpolation.** Interpolating a number is
-`a + (b - a) * t`. Staying locked to the swing is the part that actually fails,
-and it fails by giving the effect its own stopwatch.
 
-**The clock is a parameter**, and that is the one real abstraction:
+---
 
-| Clock source | For |
-|---|---|
-| follow an `AnimationTrack` | anything in tandem with a rig |
-| free-running | standalone effects |
-| anchored to a server timestamp | anything two players must see identically |
+## The animation workflow — moved out
 
-**A Score is a span of time with things scheduled in it. Silence is legal.** An
-anime-style delayed slash is a 0.4s clip, an 800ms gap where nothing plays, and
-a VFX burst at 1.2s. The transport keeps running because it is the Conductor's,
-not a clip's.
+**`AnimationWorkflow.md` owns the step order** — build the prefab, animate,
+upload, author the effects in the tool, capture the hitbox, write the row. It
+did not exist when this queue was written, and two items here were a worse copy
+of it.
+
+**One thing worth keeping here, because it lives nowhere else:** Moon Animator
+is a tool preference with **no architectural consequence for the rig half** —
+its joint export is a normal `KeyframeSequence` that publishes like any other.
+Its *property* half is what the Conductor replaces.
 
 ---
 
 ## 4 — `motion = PATH`, the hitbox side
 
-**Status:** DESIGNED (`HitDetection.md` Part 9), UNBUILT. Gated on item 3.
+**Status:** DESIGNED (`HitDetection.md` Part 9), UNBUILT. The Conductor exists
+now, so what this waits on is a real swing to record a path off — item 0.
+
+**This is `AnimationWorkflow.md`'s Phase 4.2 gap.** Until the recorder exists, a
+skill's volume stays hand-tuned against `DebugHitboxes`, which is the same
+authoring-by-looking with a coarser instrument.
 
 The hitbox becomes its own object with its own authored motion — a volume
 travelling a path placed by hand in the Conductor, anchored to the attacker's

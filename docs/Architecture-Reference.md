@@ -913,9 +913,20 @@ pipeline stage data physically passes through on its way somewhere.
 │  Game content declared as data. Read by engines, never modified     │
 │  at runtime. Defines what exists in the game world.                 │
 │                                                                     │
-│  ResourceDefinitions, WeaponDefinitions, EnemyTemplates,            │
-│  PetTemplates, BossTemplates, BuffDefinitions, LootTables,          │
-│  DungeonDefinitions, AnimationManifests, ItemDefinitions            │
+│  ResourceDefinitions, HurtboxDefinitions, BuffDefinitions,          │
+│  LootTables, DungeonDefinitions, ItemDefinitions                    │
+│                                                                     │
+│  ONE FILE PER THING, walked at boot (2026-08-23):                   │
+│    definitions/enemies/Goblin.luau    stats, hp, loot, hurtbox      │
+│    definitions/skills/BasicSwing.luau volume, clip, score           │
+│  Adding one is ONE FILE and ZERO code edits -- boot walks the       │
+│  folder, so there is no index to forget. `boot/DefinitionLoader`    │
+│  resolves and validates, aggregated into one failure naming the     │
+│  file. Replaces the single `EnemyTemplates` table.                  │
+│                                                                     │
+│  A volume in a definition is a PLAIN TABLE, never a resolved one:   │
+│  `serverShared` reaches every place, `HitVolume` exists in one, and │
+│  requiring upward would fail ON LOAD in a place without combat.     │
 │                                                                     │
 │  Lives in: src/serverShared/definitions/ -> ServerStorage.Shared    │
 │    NOT ReplicatedStorage. Definitions are game data (drop rates,    │

@@ -3,7 +3,16 @@
 What exists, what is proven, and what is not. **Scan the tables — nothing here
 needs reading start to finish.**
 
-Last updated: **2026-08-22**. Suite: **206 passed, 0 failed.**
+Last updated: **2026-08-23**. Suite: **206 passed, 0 failed.**
+
+> **A whole layer landed on 2026-08-23 and NONE of it has run**: content
+> loading, the Conductor, and the authoring tool. They boot without erroring —
+> the suite passes and the server reaches `boot complete` — but no Score has
+> ever been played and no slider has ever been dragged.
+>
+> **BUILT here means "exists and boots", not "works."** That distinction is the
+> whole reason the status words below exist, and it has never applied to more of
+> this document at once than it does right now.
 
 > **The hurtbox rebuild is DONE.** Ten limb-anchored zones per player, per-zone
 > history, resolution testing them, the single capsule deleted. Verified live.
@@ -57,8 +66,12 @@ wired to anything. Everything below marked TESTED could be dead code.
 | DamageResolution | STUB | — | Pipeline builds; steps are TODOs |
 | SkillService | STUB | — | `activate` returns NOT_IMPLEMENTED |
 | AIService | STUB | — | Scheduler row exists, no decisions |
-| Animation | ABSENT | — | Architecture written (`Animation.md`). **No longer blocked** — the group exists and the experience was transferred to it on 2026-08-22. Next: author one clip, publish, register, play |
-| Timeline (non-rig property animation) | ABSENT | — | Engine **and** dev-only editor both designed (`Timeline.md`, rev. 2026-08-19); no code. Prototype planned as the first step of animation work — Part 13 |
+| Content loading (`DefinitionLoader`) | **BUILT 2026-08-23** | — | Walks `definitions/enemies/` and `skills/`, one file per thing. Resolves and validates every volume at boot, aggregated into one failure naming the file. `EnemyTemplates` deleted; `CombatService` holds no volumes |
+| `AnimationManifest` + `Rig` (clip playback) | **BUILT 2026-08-23**, never run | — | Name → asset id; track cache with rebuild-on-respawn and a `Length > 0` resolve check. **`Rig` is flagged for replacement** — player-character-only, and the Conductor is meant to be the single door |
+| **Conductor** (property + clip tracks) | **BUILT 2026-08-23**, **NEVER RUN** | — | `client/playback/conductor/`: `init`, `Evaluate`, `Baseline`, `Playback`. One transport, the Score owns the clock. Numbers/booleans/Color3/Vector/UDim/CFrame, Linear + Cubic |
+| Conductor authoring tool | **BUILT 2026-08-23**, **NEVER RUN** | — | `client/diagnostics/conductorTool/`. Sliders write live, key at scrub time, scrub calls the shipped `evaluate`, export prints paste-ready Lua. Flag `DebugConductorTool`, **off** |
+| Animation (a real uploaded clip) | **ABSENT** | — | The one thing blocking everything downstream. Group exists, manifest exists, one blank left. `AnimationWorkflow.md` is the step order |
+| Triggers, server-anchored clock, path validation, baking | ABSENT | — | Named in `Timeline.md` Part 13 with why each is deferred |
 | Boss HFSM | ABSENT | — | Designed in `BossAI-HFSM.md` |
 
 ---

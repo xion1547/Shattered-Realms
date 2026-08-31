@@ -193,6 +193,36 @@ playback module ships.
 
 ---
 
+## Owed after the 2026-08-23 Conductor session
+
+**`Timeline.md` is named after a system that no longer has that name.** The
+engine is the **Conductor** and the document is a **Score**; every reference to
+`Timeline.luau` inside is stale by that much. The header says so, the body does
+not. A rename plus a pass over the internal references is owed.
+
+*Why it was not done in the same pass:* renaming the file breaks every
+cross-reference in six other documents, and doing that blind while the system
+underneath is still unrun is churn for its own sake. Do it once the Conductor
+has actually played something.
+
+| Where | Stale | Should say |
+|---|---|---|
+| `Timeline.md` throughout | `Timeline.luau`, `Timeline.play(def, root)` | `conductor/init.luau`, `Conductor.play(score, root)` |
+| `Timeline.md` Part 9.1 | `src/client/playback/Timeline.luau` and `shared/definitions/Timelines/` | `client/playback/conductor/` and `shared/definitions/scores/` |
+| `Timeline.md` Part 10.1 | "they are separate, and neither reads the other" | **OVERRULED.** Part 12 carries the correction; 10.1 itself still asserts the old rule |
+| `Animation.md` Part 7 | sketches the clip player as `client/playback/Animation.luau` | it is `Rig.luau`, and it is flagged for replacement by the Conductor |
+| `Animation.md` Part 16 | "Asset owner decision: NOT MADE" | decided 2026-08-16, group created 2026-08-22 |
+| `Architecture-Reference.md` Part 6 | Content Layer lists `EnemyTemplates` | `definitions/enemies/`, one file per enemy, walked at boot |
+
+**Not yet written down anywhere: the filename → id convention.** `BasicSwing`
+→ `BASIC_SWING`; an `_` before every capital following a lowercase or digit,
+then uppercased. Acronym-led names do not split (`AOEBlast` → `AOEBLAST`) and
+need an explicit `id`. It lives in `DefinitionLoader`'s header and in
+`AnimationWorkflow.md` 4.3, and it belongs in whatever document ends up owning
+the Content Layer's shape.
+
+---
+
 ## Resolved on 2026-08-23 — do not re-derive
 
 **`Hurtboxes.md` was swept in full and was the worst offender in the repo.**
