@@ -62,6 +62,17 @@ local function onConnect()
 	local input = InputSystem.new(eventTape, rig)
 	input:start()
 
+	-- DEVELOPMENT ONLY, and off unless the flag is on. Watches
+	-- `DebugConductorTool` on Workspace -- flip it in the Properties panel with
+	-- the game running (from the SERVER context; the command bar runs as the
+	-- client during a play test and attributes do not replicate upward).
+	--
+	-- Bound rather than started: this costs one attribute read at boot when off,
+	-- and the whole panel is built and torn down by the flag.
+	local ConductorTool = require(script.Parent:WaitForChild("diagnostics")
+		:WaitForChild("conductorTool"))
+	ConductorTool.bindToFlag()
+
 	-- The legacy Manager/Controller/System tree. Being dissolved with the
 	-- client rewrite; left running so the existing HUD still appears.
 	task.spawn(ClientManager.onConnect, ClientManager, LocalPlayer)

@@ -59,6 +59,19 @@ local FLAGS = {
     -- See HurtboxDebug's header.
     HurtboxServerView = false,
 
+    -- THE CONDUCTOR AUTHORING TOOL, on the client. A panel for building a
+    -- Score by dragging sliders and watching the real thing move, then printing
+    -- it as paste-ready Lua.
+    --
+    -- DECLARED HERE THOUGH IT DRIVES CLIENT CODE, because Workspace attributes
+    -- replicate server -> client: one switchboard, both sides. The client tool
+    -- watches this same attribute.
+    --
+    -- DEVELOPMENT ONLY. Today this flag is the only thing keeping it out of a
+    -- running game -- there is one project file and nothing excludes
+    -- `client/diagnostics/`. Real exclusion arrives with a production build.
+    ConductorTool = false,
+
     -- ---- LOGGING: text ----------------------------------------------------
     -- Per-swing breakdown: latency, rewind, broadphase, and every candidate
     -- with the numbers it was judged on.
